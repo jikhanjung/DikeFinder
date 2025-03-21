@@ -3,7 +3,7 @@ import os
 import pandas as pd
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QTableView, QLabel, QSplitter, 
-                            QFileDialog, QPushButton, QMessageBox, QScrollArea)
+                            QFileDialog, QPushButton, QMessageBox, QScrollArea, QSizePolicy)
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QPoint, QEvent, QRect
 from PyQt5.QtGui import QPixmap, QImage, QCursor, QPainter, QColor, QPen
 
@@ -124,280 +124,63 @@ class ImageViewer(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         
+        # Create top control bar with zoom buttons and filename
+        top_layout = QHBoxLayout()
+        
         # Create zoom controls
-        zoom_layout = QHBoxLayout()
-        
-        self.zoom_in_button = QPushButton("+")
-        self.zoom_in_button.setToolTip("Zoom In")
-        self.zoom_in_button.clicked.connect(self.zoom_in)
-        self.zoom_in_button.setFixedSize(40, 40)
-        
         self.zoom_out_button = QPushButton("-")
         self.zoom_out_button.setToolTip("Zoom Out")
         self.zoom_out_button.clicked.connect(self.zoom_out)
-        self.zoom_out_button.setFixedSize(40, 40)
+        self.zoom_out_button.setFixedSize(30, 30)
         
         self.reset_zoom_button = QPushButton("Reset")
         self.reset_zoom_button.setToolTip("Reset Zoom")
         self.reset_zoom_button.clicked.connect(self.reset_zoom)
+        self.reset_zoom_button.setFixedHeight(30)
         
-        zoom_layout.addWidget(self.zoom_out_button)
-        zoom_layout.addWidget(self.reset_zoom_button)
-        zoom_layout.addWidget(self.zoom_in_button)
-        zoom_layout.addStretch()
+        self.zoom_in_button = QPushButton("+")
+        self.zoom_in_button.setToolTip("Zoom In")
+        self.zoom_in_button.clicked.connect(self.zoom_in)
+        self.zoom_in_button.setFixedSize(30, 30)
         
-        # Add filename label
+        # Add filename label with ellipsis for long names
         self.filename_label = QLabel("No image loaded")
         self.filename_label.setAlignment(Qt.AlignCenter)
-        self.filename_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 5px;")
+        self.filename_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        # Set size policy to allow the label to shrink
+        self.filename_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        # Enable text elision for long filenames
+        self.filename_label.setTextFormat(Qt.PlainText)
+        self.filename_label.setWordWrap(False)
         
-        # Create scroll area for panning
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(False)  # Changed to False to allow custom sizing
-        self.scroll_area.setAlignment(Qt.AlignCenter)
+        # Add widgets to top layout
+        top_layout.addWidget(self.zoom_out_button)
+        top_layout.addWidget(self.reset_zoom_button)
+        top_layout.addWidget(self.zoom_in_button)
+        top_layout.addWidget(self.filename_label, 1)  # Give filename label stretch priority
         
-        # Create container widget for the image label
-        self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins
-        
-        # Image display label
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignCenter)
-        
-        # Set a placeholder image
-        self.placeholder = QPixmap(500, 500)
-        self.placeholder.fill(Qt.lightGray)
-        self.image_label.setPixmap(self.placeholder)
-        
-        # Add image label to content widget
-        self.content_layout.addWidget(self.image_label)
-        self.scroll_area.setWidget(self.content_widget)
+        # Create direct image display widget
+        self.image_display = ImageDisplayWidget()
         
         # Add controls and content to the main layout
-        self.layout.addLayout(zoom_layout)
-        self.layout.addWidget(self.filename_label)
-        self.layout.addWidget(self.scroll_area)
+        self.layout.addLayout(top_layout)
+        self.layout.addWidget(self.image_display, 1)  # Give image display stretch priority
         
         # Initialize variables for zooming and panning
         self.image_dir = ""
         self.current_image_path = None
-        self.original_pixmap = None
-        self.scale_factor = 1.0
-        self.min_scale = 0.1
-        self.max_scale = 10.0
-        self.zoom_step = 0.1
-        
-        # Variables for marker overlays
-        self.marker_position = None
-        self.marker_radius = 20
-        self.marker_color = QColor(255, 0, 0, 128)  # Semi-transparent red
-        
-        # Variables for panning with mouse
-        self.panning = False
-        self.last_pan_point = QPoint()
-        
-        # Enable mouse tracking for the image label
-        self.image_label.setMouseTracking(True)
-        self.image_label.installEventFilter(self)
-        
-    def eventFilter(self, obj, event):
-        """Handle mouse events for panning the image"""
-        if obj is self.image_label:
-            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                # Start panning
-                self.panning = True
-                self.last_pan_point = event.pos()
-                self.image_label.setCursor(QCursor(Qt.ClosedHandCursor))
-                return True
-                
-            elif event.type() == QEvent.MouseMove and self.panning:
-                # Calculate the difference from the last position
-                delta = event.pos() - self.last_pan_point
-                self.last_pan_point = event.pos()
-                
-                # Adjust the scroll bars - allow movement beyond normal bounds
-                hbar = self.scroll_area.horizontalScrollBar()
-                vbar = self.scroll_area.verticalScrollBar()
-                
-                # Move the scrollbars
-                hbar.setValue(hbar.value() - delta.x())
-                vbar.setValue(vbar.value() - delta.y())
-                return True
-                
-            elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and self.panning:
-                # Stop panning
-                self.panning = False
-                self.image_label.setCursor(QCursor(Qt.OpenHandCursor))
-                return True
-                
-            elif event.type() == QEvent.Wheel:
-                # Zoom with mouse wheel centered on cursor position
-                degrees = event.angleDelta().y() / 8
-                steps = degrees / 15
-                
-                # Store cursor position for centered zoom
-                cursor_pos = event.pos()
-                
-                old_scale = self.scale_factor
-                
-                if steps > 0:
-                    self.scale_factor = min(self.scale_factor + self.zoom_step, self.max_scale)
-                elif steps < 0:
-                    self.scale_factor = max(self.scale_factor - self.zoom_step, self.min_scale)
-                
-                # Only update if scale actually changed
-                if old_scale != self.scale_factor:
-                    self.zoom_at_position(cursor_pos, old_scale)
-                    
-                return True
-                
-            elif event.type() == QEvent.Enter:
-                # Change cursor when entering the image area
-                if not self.panning:
-                    self.image_label.setCursor(QCursor(Qt.OpenHandCursor))
-                return True
-                
-            elif event.type() == QEvent.Leave:
-                # Reset cursor when leaving the image area
-                self.image_label.setCursor(QCursor(Qt.ArrowCursor))
-                return True
-                
-        return super().eventFilter(obj, event)
-        
-    def zoom_at_position(self, position, old_scale):
-        """Zoom at the specified position, keeping that position fixed under the cursor"""
-        if not self.original_pixmap:
-            return
-            
-        # Get scroll bar positions before zoom
-        hbar = self.scroll_area.horizontalScrollBar()
-        vbar = self.scroll_area.verticalScrollBar()
-        
-        # Calculate how far the cursor is from the top-left corner of the visible area
-        visible_x = position.x() + hbar.value() - self.image_label.x()
-        visible_y = position.y() + vbar.value() - self.image_label.y()
-        
-        # Calculate the relative position within the image
-        rel_x = visible_x / (self.original_pixmap.width() * old_scale)
-        rel_y = visible_y / (self.original_pixmap.height() * old_scale)
-        
-        # Update the image with the new scale
-        self.update_zoom()
-        
-        # Calculate the new scroll position to keep the point under the cursor
-        # This now works with the larger content area
-        new_visible_x = rel_x * (self.original_pixmap.width() * self.scale_factor)
-        new_visible_y = rel_y * (self.original_pixmap.height() * self.scale_factor)
-        
-        # Adjust for the centering offset in the larger content widget
-        content_width = self.content_widget.width()
-        content_height = self.content_widget.height()
-        image_width = self.original_pixmap.width() * self.scale_factor
-        image_height = self.original_pixmap.height() * self.scale_factor
-        
-        x_offset = (content_width - image_width) // 2
-        y_offset = (content_height - image_height) // 2
-        
-        # Set new scroll positions
-        hbar.setValue(int(new_visible_x + x_offset - position.x() + self.image_label.x()))
-        vbar.setValue(int(new_visible_y + y_offset - position.y() + self.image_label.y()))
-        
-        print(f"Zoomed at position ({position.x()}, {position.y()}), scale: {self.scale_factor:.2f}")
         
     def zoom_in(self):
         """Increase zoom level by one step"""
-        if self.scale_factor < self.max_scale:
-            old_scale = self.scale_factor
-            self.scale_factor += self.zoom_step
-            
-            # Get center of viewport for zooming
-            viewport = self.scroll_area.viewport()
-            center = QPoint(viewport.width() // 2, viewport.height() // 2)
-            
-            # Zoom at the center of the viewport
-            self.zoom_at_position(center, old_scale)
+        self.image_display.zoom_in()
             
     def zoom_out(self):
         """Decrease zoom level by one step"""
-        if self.scale_factor > self.min_scale:
-            old_scale = self.scale_factor
-            self.scale_factor -= self.zoom_step
-            
-            # Get center of viewport for zooming
-            viewport = self.scroll_area.viewport()
-            center = QPoint(viewport.width() // 2, viewport.height() // 2)
-            
-            # Zoom at the center of the viewport
-            self.zoom_at_position(center, old_scale)
+        self.image_display.zoom_out()
             
     def reset_zoom(self):
         """Reset zoom to original size"""
-        old_scale = self.scale_factor
-        self.scale_factor = 1.0
-        
-        # Get center of viewport for zooming
-        viewport = self.scroll_area.viewport()
-        center = QPoint(viewport.width() // 2, viewport.height() // 2)
-        
-        # Zoom at the center of the viewport
-        self.zoom_at_position(center, old_scale)
-        
-    def update_zoom(self):
-        """Apply the current zoom level to the image and draw any markers"""
-        if self.original_pixmap:
-            # Create a new pixmap to draw on
-            scaled_size = self.original_pixmap.size() * self.scale_factor
-            
-            # Start with a clean copy of the original image
-            temp_pixmap = self.original_pixmap.scaled(
-                scaled_size,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            
-            # If we have a marker position, draw it
-            if self.marker_position is not None:
-                # Scale the marker position according to the current zoom
-                scaled_x = int(self.marker_position.x() * self.scale_factor)
-                scaled_y = int(self.marker_position.y() * self.scale_factor)
-                scaled_radius = int(self.marker_radius * self.scale_factor)
-                
-                # Draw the marker on a copy of the scaled pixmap
-                painter = QPainter(temp_pixmap)
-                painter.setRenderHint(QPainter.Antialiasing)
-                pen = QPen(self.marker_color)
-                pen.setWidth(3)
-                painter.setPen(pen)
-                painter.setBrush(self.marker_color)
-                painter.drawEllipse(
-                    QPoint(scaled_x, scaled_y),
-                    scaled_radius,
-                    scaled_radius
-                )
-                painter.end()
-            
-            # Set the pixmap with the marker
-            self.image_label.setPixmap(temp_pixmap)
-            
-            # Set the content widget size to be larger than the image to allow panning beyond edges
-            viewport_width = self.scroll_area.viewport().width()
-            viewport_height = self.scroll_area.viewport().height()
-            
-            # Make the content area larger than the image by a factor
-            # This allows the image to be moved partially out of view
-            content_width = max(temp_pixmap.width() * 2, viewport_width * 2)
-            content_height = max(temp_pixmap.height() * 2, viewport_height * 2)
-            
-            # Set the content widget size
-            self.content_widget.setFixedSize(content_width, content_height)
-            
-            # Center the image label in the content widget
-            self.image_label.resize(temp_pixmap.size())
-            self.image_label.move(
-                (content_width - temp_pixmap.width()) // 2,
-                (content_height - temp_pixmap.height()) // 2
-            )
+        self.image_display.reset_zoom()
         
     def set_image_dir(self, directory):
         """Set the directory where images are stored"""
@@ -421,8 +204,8 @@ class ImageViewer(QWidget):
             
         image_path = self.find_image_file(photo_name)
         if image_path:
-            self.set_image(image_path)
-            return True
+            success = self.set_image(image_path)
+            return success
         else:
             print(f"No image found for: {photo_name}")
             return False
@@ -434,25 +217,19 @@ class ImageViewer(QWidget):
             return False
         
         self.current_image_path = image_path
-        pixmap = QPixmap(image_path)
+        success = self.image_display.load_image(image_path)
         
-        if not pixmap.isNull():
-            # Store the original pixmap for zooming
-            self.original_pixmap = pixmap
-            
-            # Reset zoom when loading a new image
-            self.scale_factor = 1.0
-            self.marker_position = None  # Clear any existing marker
-            self.update_zoom()
-            
-            # Update filename label
+        if success:
+            # Update filename label with ellipsis for long names
             filename = os.path.basename(image_path)
             self.filename_label.setText(filename)
-            
+            # Ensure the label shows ellipsis for long text
+            self.filename_label.setToolTip(filename)  # Show full name on hover
             return True
         else:
             print(f"Failed to load image: {image_path}")
             self.filename_label.setText("Failed to load image")
+            self.filename_label.setToolTip("")
             return False
 
     def set_marker(self, x, y):
@@ -471,52 +248,214 @@ class ImageViewer(QWidget):
             x_pixels = x
             y_pixels = y
             
-        # Convert to integers for QPoint
-        self.marker_position = QPoint(int(x_pixels), int(y_pixels))
-        self.update_zoom()  # This will redraw the image with the marker
-        
-        # Center the view on the marker
-        self.center_on_marker()
-    
-    def center_on_marker(self):
-        """Center the view on the current marker"""
-        if self.marker_position and self.original_pixmap:
-            # Calculate the scaled marker position
-            scaled_x = int(self.marker_position.x() * self.scale_factor)
-            scaled_y = int(self.marker_position.y() * self.scale_factor)
-            
-            # Get the viewport size
-            viewport_width = self.scroll_area.viewport().width()
-            viewport_height = self.scroll_area.viewport().height()
-            
-            # Calculate the scroll position to center the marker
-            hbar = self.scroll_area.horizontalScrollBar()
-            vbar = self.scroll_area.verticalScrollBar()
-            
-            # Adjust for the centering offset in the larger content widget
-            content_width = self.content_widget.width()
-            content_height = self.content_widget.height()
-            image_width = self.original_pixmap.width() * self.scale_factor
-            image_height = self.original_pixmap.height() * self.scale_factor
-            
-            x_offset = (content_width - image_width) // 2
-            y_offset = (content_height - image_height) // 2
-            
-            # Calculate new positions (center the marker in the viewport)
-            # Make sure to convert to int for scrollbar setValue method
-            new_x = int(max(0, scaled_x + x_offset - viewport_width // 2))
-            new_y = int(max(0, scaled_y + y_offset - viewport_height // 2))
-            
-            # Set the scrollbar positions
-            hbar.setValue(new_x)
-            vbar.setValue(new_y)
-            
-            print(f"Centered view on marker at pixel coordinates: ({scaled_x}, {scaled_y})")
+        # Set marker on display widget
+        self.image_display.set_marker(int(x_pixels), int(y_pixels))
     
     def clear_marker(self):
         """Clear the marker"""
+        self.image_display.clear_marker()
+
+
+class ImageDisplayWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Set focus policy to receive keyboard events
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+        
+        # Variables for image display
+        self.original_pixmap = None
+        self.displayed_pixmap = None
+        
+        # Variables for zooming
+        self.scale_factor = 1.0
+        self.min_scale = 0.1
+        self.max_scale = 10.0
+        self.zoom_step = 0.1
+        
+        # Variables for panning
+        self.panning = False
+        self.last_pan_point = QPoint()
+        self.offset = QPoint(0, 0)
+        
+        # Variables for marker
         self.marker_position = None
-        self.update_zoom()
+        self.marker_radius = 20
+        self.marker_color = QColor(255, 0, 0, 128)  # Semi-transparent red
+        
+        # Set a placeholder background
+        self.setMinimumSize(500, 500)
+        self.placeholder_color = Qt.lightGray
+        
+    def load_image(self, image_path):
+        """Load an image from file"""
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            return False
+            
+        self.original_pixmap = pixmap
+        self.scale_factor = 1.0
+        self.offset = QPoint(0, 0)
+        self.marker_position = None
+        self.update()
+        return True
+        
+    def paintEvent(self, event):
+        """Draw the image with current zoom and pan settings"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        # Fill the background
+        painter.fillRect(self.rect(), self.placeholder_color)
+        
+        if self.original_pixmap:
+            # Calculate scaled image size
+            scaled_size = self.original_pixmap.size() * self.scale_factor
+            scaled_pixmap = self.original_pixmap.scaled(
+                scaled_size.width(),
+                scaled_size.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            # Calculate position to center the image in the viewport and apply offset
+            x = (self.width() - scaled_pixmap.width()) // 2 + self.offset.x()
+            y = (self.height() - scaled_pixmap.height()) // 2 + self.offset.y()
+            
+            # Draw the scaled image at the offset position
+            painter.drawPixmap(x, y, scaled_pixmap)
+            
+            # Draw marker if present
+            if self.marker_position:
+                # Calculate marker position with zoom and pan
+                marker_x = x + int(self.marker_position.x() * self.scale_factor)
+                marker_y = y + int(self.marker_position.y() * self.scale_factor)
+                scaled_radius = int(self.marker_radius * self.scale_factor)
+                
+                # Draw marker
+                painter.setPen(QPen(self.marker_color, 3))
+                painter.setBrush(self.marker_color)
+                painter.drawEllipse(
+                    QPoint(marker_x, marker_y),
+                    scaled_radius,
+                    scaled_radius
+                )
+        
+    def wheelEvent(self, event):
+        """Handle mouse wheel for zooming"""
+        if not self.original_pixmap:
+            return
+            
+        # Get mouse position
+        mouse_pos = event.pos()
+        
+        # Calculate zoom change
+        degrees = event.angleDelta().y() / 8
+        steps = degrees / 15
+        
+        old_scale = self.scale_factor
+        
+        # Apply zoom
+        if steps > 0:
+            self.scale_factor = min(self.scale_factor + self.zoom_step, self.max_scale)
+        elif steps < 0:
+            self.scale_factor = max(self.scale_factor - self.zoom_step, self.min_scale)
+        
+        # Only update if scale changed
+        if old_scale != self.scale_factor:
+            # Calculate position relative to image center
+            center_x = self.width() // 2 + self.offset.x()
+            center_y = self.height() // 2 + self.offset.y()
+            
+            # Calculate mouse offset from center
+            rel_x = mouse_pos.x() - center_x
+            rel_y = mouse_pos.y() - center_y
+            
+            # Adjust offset to keep point under cursor
+            self.offset.setX(self.offset.x() - int(rel_x * (self.scale_factor / old_scale - 1)))
+            self.offset.setY(self.offset.y() - int(rel_y * (self.scale_factor / old_scale - 1)))
+            
+            # Redraw
+            self.update()
+            
+    def mousePressEvent(self, event):
+        """Handle mouse press for panning"""
+        if event.button() == Qt.LeftButton:
+            self.panning = True
+            self.last_pan_point = event.pos()
+            self.setCursor(QCursor(Qt.ClosedHandCursor))
+            
+    def mouseMoveEvent(self, event):
+        """Handle mouse movement for panning"""
+        if self.panning:
+            # Calculate the movement delta
+            delta = event.pos() - self.last_pan_point
+            self.last_pan_point = event.pos()
+            
+            # Update offset
+            self.offset += delta
+            
+            # Redraw
+            self.update()
+        else:
+            # Change cursor when not panning
+            if self.original_pixmap:
+                self.setCursor(QCursor(Qt.OpenHandCursor))
+            
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release for panning"""
+        if event.button() == Qt.LeftButton and self.panning:
+            self.panning = False
+            self.setCursor(QCursor(Qt.OpenHandCursor))
+            
+    def zoom_in(self):
+        """Zoom in by one step"""
+        if not self.original_pixmap:
+            return
+            
+        if self.scale_factor < self.max_scale:
+            self.scale_factor += self.zoom_step
+            self.update()
+            
+    def zoom_out(self):
+        """Zoom out by one step"""
+        if not self.original_pixmap:
+            return
+            
+        if self.scale_factor > self.min_scale:
+            self.scale_factor -= self.zoom_step
+            self.update()
+            
+    def reset_zoom(self):
+        """Reset zoom to original size"""
+        if not self.original_pixmap:
+            return
+            
+        self.scale_factor = 1.0
+        self.offset = QPoint(0, 0)
+        self.update()
+        
+    def set_marker(self, x, y):
+        """Set marker at specified coordinates"""
+        self.marker_position = QPoint(x, y)
+        self.center_on_marker()
+        self.update()
+    
+    def clear_marker(self):
+        """Clear marker"""
+        self.marker_position = None
+        self.update()
+        
+    def center_on_marker(self):
+        """Center the view on the marker"""
+        if not self.marker_position or not self.original_pixmap:
+            return
+            
+        # Reset offset to center the marker
+        self.offset = QPoint(0, 0)
+        self.update()
 
 
 class DikeFinderApp(QMainWindow):
@@ -714,3 +653,24 @@ if __name__ == "__main__":
     window = DikeFinderApp()
     window.show()
     sys.exit(app.exec_()) 
+
+
+''' 
+How to make an exe file
+
+pyinstaller --name "DikeFinder_v0.0.1.exe" --onefile --noconsole main.py
+pyinstaller --onedir --noconsole --add-data "icons/*.png;icons" --add-data "translations/*.qm;translations" --add-data "migrations/*;migrations" --icon="icons/Modan2_2.png" --noconfirm Modan2.py
+#--upx-dir=/path/to/upx
+
+for MacOS
+pyinstaller --onefile --noconsole --add-data "icons/*.png:icons" --add-data "translations/*.qm:translations" --add-data "migrations/*:migrations" --icon="icons/Modan2_2.png" Modan2.py
+pyinstaller --onedir --noconsole --add-data "icons/*.png:icons" --add-data "translations/*.qm:translations" --add-data "migrations/*:migrations" --icon="icons/Modan2_2.png" --noconfirm Modan2.py
+
+pylupdate5 Modan2.py ModanComponents.py ModanDialogs.py -ts translations/Modan2_en.ts
+pylupdate5 Modan2.py ModanComponents.py ModanDialogs.py -ts translations/Modan2_ko.ts
+pylupdate5 Modan2.py ModanComponents.py ModanDialogs.py -ts translations/Modan2_ja.ts
+
+linguist
+
+
+'''
