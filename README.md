@@ -1,11 +1,11 @@
-# DykeFinder
+# DikeFinder
 
-A PyQt application for viewing and analyzing geological dyke data.
+A PyQt application for viewing and analyzing geological dike data.
 
 ## Features
 
-- Map visualization of dyke locations
-- Tabular data view of dyke information
+- Map visualization of dike locations
+- Tabular data view of dike information
 - Side-by-side display of map and data
 
 ## Setup
@@ -23,5 +23,5 @@ A PyQt application for viewing and analyzing geological dyke data.
 ## Usage
 
 - The left panel displays a map image
-- The right panel shows tabular data about dykes
+- The right panel shows tabular data about dikes
 - Use the splitter between panels to adjust the view
