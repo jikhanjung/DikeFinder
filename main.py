@@ -3,8 +3,8 @@ import os
 import pandas as pd
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QTableView, QLabel, QSplitter, 
-                            QFileDialog, QPushButton, QMessageBox, QScrollArea, QSizePolicy, QCheckBox)
-from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QPoint, QEvent, QRect, pyqtSignal
+                            QFileDialog, QPushButton, QMessageBox, QScrollArea, QSizePolicy, QCheckBox, QLayout)
+from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QPoint, QEvent, QRect, pyqtSignal, QSortFilterProxyModel, QSize
 from PyQt5.QtGui import QPixmap, QImage, QCursor, QPainter, QColor, QPen
 
 # Debugging helper function
@@ -20,8 +20,8 @@ def debug_print(message, level=1):
 class DikeTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
-        # Korean column headers from the Excel file
-        self.headers = ["지역", "기호", "지층", "대표암상", "시대", "각도", 
+        # Add sequence number as first column, followed by Korean column headers
+        self.headers = ["#", "지역", "기호", "지층", "대표암상", "시대", "각도", 
                         "거리 (km)", "주소", "색", "좌표 X", "좌표 Y", "사진 이름"]
         
         # Sample data - will be replaced with data from Excel
@@ -60,7 +60,8 @@ class DikeTableModel(QAbstractTableModel):
             debug_print(f"Columns after cleanup: {list(df.columns)}", 2)
 
             # Check if necessary columns exist
-            required_columns = self.headers
+            # Skip the first column (sequence number) as it's generated
+            required_columns = self.headers[1:]
             
             # Check which columns actually exist
             existing_columns = []
@@ -112,8 +113,20 @@ class DikeTableModel(QAbstractTableModel):
         return len(self.headers)
     
     def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            return str(self.data[index.row()][index.column()])
+        if index.column() == 0:  # Sequence number column
+            if role == Qt.DisplayRole:
+                # Return as string for display
+                return str(index.row() + 1)
+            elif role == Qt.UserRole:
+                # Return as integer for sorting
+                return index.row() + 1
+        else:
+            if role == Qt.DisplayRole:
+                # For all other columns, return data from the model
+                return str(self.data[index.row()][index.column() - 1])
+            elif role == Qt.UserRole:
+                # For other columns, provide the same data for sorting
+                return self.data[index.row()][index.column() - 1]
         return None
     
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -124,7 +137,7 @@ class DikeTableModel(QAbstractTableModel):
     def get_photo_name(self, row):
         """Return the photo name for the given row"""
         if 0 <= row < len(self.data):
-            return self.data[row][11]  # 11 is the index of "사진 이름"
+            return self.data[row][11]  # Still index 11 in the data array (12th column in display)
         return None
 
 
@@ -341,6 +354,39 @@ class ImageViewer(QWidget):
         """Clear the marker"""
         self.image_display.clear_marker()
 
+    def set_multiple_markers(self, coordinates_list, primary_index=None):
+        """Set multiple markers from a list of coordinates
+        
+        Args:
+            coordinates_list: List of (x, y) coordinate pairs
+            primary_index: Index of the primary marker (if any)
+        """
+        # Convert all coordinates to pixel positions
+        markers = []
+        primary_marker = None
+        
+        pixels_per_cm = 96 / 2.54  # Convert cm to pixels
+        
+        for i, (x, y) in enumerate(coordinates_list):
+            # Convert to pixels if needed
+            if isinstance(x, float) or isinstance(y, float):
+                x_pixels = x * pixels_per_cm
+                y_pixels = y * pixels_per_cm
+            else:
+                x_pixels = x
+                y_pixels = y
+            
+            point = QPoint(int(x_pixels), int(y_pixels))
+            
+            # Set as primary marker if it matches the primary index
+            if i == primary_index:
+                primary_marker = point
+            else:
+                markers.append(point)
+        
+        # Set markers
+        self.image_display.set_multiple_markers(markers, primary_marker)
+
 
 class ImageDisplayWidget(QWidget):
     # Add signal for zoom changes
@@ -368,8 +414,9 @@ class ImageDisplayWidget(QWidget):
         self.last_pan_point = QPoint()
         self.offset = QPoint(0, 0)
         
-        # Variables for marker
-        self.marker_position = None
+        # Variables for markers
+        self.marker_position = None  # Primary marker
+        self.secondary_markers = []  # Additional markers
         self.marker_radius = 20
         self.marker_color = QColor(255, 0, 0, 128)  # Semi-transparent red
         
@@ -435,7 +482,30 @@ class ImageDisplayWidget(QWidget):
             # Draw the scaled image at the offset position
             painter.drawPixmap(x, y, scaled_pixmap)
             
-            # Draw marker if present
+            # Draw secondary markers first (smaller and dimmer)
+            if hasattr(self, 'secondary_markers') and self.secondary_markers:
+                # Use a more transparent color for secondary markers
+                secondary_color = QColor(255, 0, 0, 60)  # Very transparent red
+                painter.setPen(QPen(secondary_color, 2))
+                painter.setBrush(secondary_color)
+                
+                for marker_pos in self.secondary_markers:
+                    if marker_pos:
+                        # Calculate marker position with zoom and pan
+                        marker_x = x + int(marker_pos.x() * self.scale_factor)
+                        marker_y = y + int(marker_pos.y() * self.scale_factor)
+                        
+                        # Use a smaller radius for secondary markers
+                        scaled_radius = int(self.marker_radius * 0.6 * self.scale_factor)
+                        
+                        # Draw smaller marker
+                        painter.drawEllipse(
+                            QPoint(marker_x, marker_y),
+                            scaled_radius,
+                            scaled_radius
+                        )
+            
+            # Draw primary marker if present (larger and more visible)
             if self.marker_position:
                 # Calculate marker position with zoom and pan
                 marker_x = x + int(self.marker_position.x() * self.scale_factor)
@@ -613,8 +683,9 @@ class ImageDisplayWidget(QWidget):
         self.update()
     
     def clear_marker(self):
-        """Clear marker"""
+        """Clear all markers"""
         self.marker_position = None
+        self.secondary_markers = []
         self.update()
     
     def center_on_marker(self):
@@ -741,6 +812,106 @@ class ImageDisplayWidget(QWidget):
         self.zoom_changed.emit(self.scale_factor)
         self.update()
 
+    def set_multiple_markers(self, markers, primary_marker=None):
+        """Set multiple markers at specified coordinates
+        
+        Args:
+            markers: List of (x, y) tuples for marker positions
+            primary_marker: Optional (x, y) tuple for the primary marker position
+        """
+        debug_print(f"Setting {len(markers)} markers", 2)
+        
+        # Clear existing markers
+        self.marker_position = primary_marker  # Keep the primary marker for traditional functionality
+        self.secondary_markers = markers if markers else []  # Add secondary markers
+        
+        # Update the display
+        self.update()
+
+
+class FlowLayout(QLayout):
+    """Custom flow layout that automatically arranges widgets in multiple rows based on available space"""
+    def __init__(self, parent=None, margin=0, spacing=-1):
+        super().__init__(parent)
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self._items = []
+        
+    def __del__(self):
+        while self.count():
+            item = self.takeAt(0)
+            del item
+        
+    def addItem(self, item):
+        self._items.append(item)
+        
+    def count(self):
+        return len(self._items)
+        
+    def itemAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+        
+    def takeAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+        
+    def expandingDirections(self):
+        return Qt.Orientations(0)
+        
+    def hasHeightForWidth(self):
+        return True
+        
+    def heightForWidth(self, width):
+        return self._doLayout(QRect(0, 0, width, 0), True)
+        
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._doLayout(rect, False)
+        
+    def sizeHint(self):
+        width = self.minimumSize().width()
+        height = self.heightForWidth(width)
+        return QSize(width, height)
+        
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        
+        margin = self.contentsMargins()
+        size += QSize(2 * margin.left(), 2 * margin.top())
+        return size
+        
+    def _doLayout(self, rect, testOnly):
+        x = rect.x()
+        y = rect.y()
+        lineHeight = 0
+        
+        for item in self._items:
+            wid = item.widget()
+            spaceX = self.spacing() + wid.style().layoutSpacing(
+                QSizePolicy.PushButton, QSizePolicy.PushButton, Qt.Horizontal)
+            spaceY = self.spacing() + wid.style().layoutSpacing(
+                QSizePolicy.PushButton, QSizePolicy.PushButton, Qt.Vertical)
+            
+            nextX = x + item.sizeHint().width() + spaceX
+            if nextX - spaceX > rect.right() and lineHeight > 0:
+                x = rect.x()
+                y = y + lineHeight + spaceY
+                nextX = x + item.sizeHint().width() + spaceX
+                lineHeight = 0
+                
+            if not testOnly:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+                
+            x = nextX
+            lineHeight = max(lineHeight, item.sizeHint().height())
+            
+        return y + lineHeight - rect.y()
+
 
 class DikeFinderApp(QMainWindow):
     # Class-level debug flag
@@ -790,16 +961,36 @@ class DikeFinderApp(QMainWindow):
         # Add the button layout to the main layout
         main_layout.addLayout(button_layout)
         
+        # Create filter button container with flow layout
+        self.filter_widget = QWidget()
+        self.filter_layout = FlowLayout(self.filter_widget, margin=2, spacing=2)
+        self.filter_layout.setContentsMargins(2, 2, 2, 2)
+        self.filter_widget.setLayout(self.filter_layout)
+        
+        # Change from Fixed to Minimum for vertical policy to allow necessary growth
+        self.filter_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        
+        # Add the filter widget directly to the main layout
+        main_layout.addWidget(self.filter_widget)
+        # Keep this to prevent unnecessary stretching
+        main_layout.setStretchFactor(self.filter_widget, 0)
+        
         # Use a splitter for resizable panels
         self.splitter = QSplitter(Qt.Horizontal)
         
         # Create image viewer
         self.image_viewer = ImageViewer()
         
-        # Create table view
+        # Create table view with proxy model for filtering
         self.table_view = QTableView()
         self.table_model = DikeTableModel()
-        self.table_view.setModel(self.table_model)
+        
+        # Create custom proxy model for filtering and sequential numbering
+        self.proxy_model = SequentialNumberProxyModel()
+        self.proxy_model.setSourceModel(self.table_model)
+        self.proxy_model.setFilterKeyColumn(12)  # Filter on "사진 이름" column
+        self.proxy_model.setSortRole(Qt.UserRole)  # Use UserRole for sorting
+        self.table_view.setModel(self.proxy_model)
         
         # Adjust table properties
         self.table_view.horizontalHeader().setStretchLastSection(True)
@@ -817,13 +1008,19 @@ class DikeFinderApp(QMainWindow):
         self.splitter.setSizes([600, 600])
         
         # Add splitter to main layout
-        main_layout.addWidget(self.splitter)
+        main_layout.addWidget(self.splitter, 1)  # Give it a stretch factor of 1
+        
+        # Adjust the stretch factors to prioritize the splitter
+        main_layout.setStretchFactor(self.splitter, 10)  # Give the splitter much more stretch priority
 
         # Set default image directory to './data'
         self.set_default_image_directory()
         
         # Try to find and load Excel file from data directory
         self.load_excel_from_data_dir()
+        
+        # Store the current filter
+        self.current_filter = ""
 
     def toggle_verbose_mode(self, state):
         """Toggle verbose mode on/off"""
@@ -865,33 +1062,237 @@ class DikeFinderApp(QMainWindow):
             # Status bar message instead of popup
             if hasattr(self, 'statusBar'):
                 self.statusBar().showMessage(f"Image directory: {directory}", 3000)
+            
+            # Update image filter buttons
+            self.update_image_filter_buttons()
+    
+    def update_image_filter_buttons(self):
+        """Create buttons for each available image file in the directory"""
+        # Clear existing buttons
+        for i in reversed(range(self.filter_layout.count())): 
+            item = self.filter_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # If no directory is set, just return
+        if not self.image_viewer.image_dir or not os.path.exists(self.image_viewer.image_dir):
+            debug_print("No valid image directory to create filter buttons", 1)
+            return
+        
+        # Add "All" button first
+        all_button = QPushButton("All")
+        all_button.setToolTip("Show all records")
+        all_button.setCheckable(True)
+        all_button.setChecked(True)  # Default to checked
+        all_button.clicked.connect(lambda: self.filter_table(""))
+        all_button.setStyleSheet("background-color: #e6f2ff; font-weight: bold;")
+        # Make buttons a bit taller to show text fully
+        all_button.setFixedHeight(24)
+        all_button.setMinimumWidth(40)
+        all_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.filter_layout.addWidget(all_button)
+        
+        # Find all image files in the directory
+        image_files = []
+        unique_prefixes = set()
+        prefix_to_image = {}  # Maps prefix to image file path
+        
+        for filename in os.listdir(self.image_viewer.image_dir):
+            file_path = os.path.join(self.image_viewer.image_dir, filename)
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                image_files.append(file_path)
+                
+                # Extract prefix (e.g., "0. 마전리" from filename)
+                for row in range(self.table_model.rowCount()):
+                    photo_name = self.table_model.get_photo_name(row)
+                    if photo_name and photo_name in filename:
+                        unique_prefixes.add(photo_name)
+                        # Store the first matching image file for this prefix
+                        if photo_name not in prefix_to_image:
+                            prefix_to_image[photo_name] = file_path
+                        break
+        
+        # Sort the prefixes for consistent ordering
+        sorted_prefixes = sorted(list(unique_prefixes))
+        
+        debug_print(f"Found {len(sorted_prefixes)} unique image prefixes", 1)
+        
+        # Create a button for each unique prefix
+        for prefix in sorted_prefixes:
+            if not prefix.strip():
+                continue
+            
+            button = QPushButton(prefix)
+            button.setToolTip(f"Show only records for {prefix}")
+            button.setCheckable(True)
+            
+            # Store the image path in the button's data
+            if prefix in prefix_to_image:
+                image_path = prefix_to_image[prefix]
+                # Create a closure that captures both prefix and image_path
+                button.clicked.connect(lambda checked, p=prefix, img=image_path: self.filter_and_load_image(p, img))
+            else:
+                # Fallback if no image found
+                button.clicked.connect(lambda checked, p=prefix: self.filter_table(p))
+            
+            # Make buttons a bit taller to show text fully
+            button.setFixedHeight(24)
+            button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.filter_layout.addWidget(button)
+
+    def filter_and_load_image(self, prefix, image_path):
+        """Filter the table by prefix and load the image with markers for all matching rows"""
+        # First filter the table
+        self.filter_table(prefix)
+        
+        # Then load the image
+        debug_print(f"Loading image: {image_path}", 1)
+        success = self.image_viewer.set_image(image_path)
+        
+        if success:
+            debug_print(f"Successfully loaded image for prefix: {prefix}", 1)
+            
+            # Collect coordinates for all visible rows that match this prefix
+            coordinates = []
+            
+            for row in range(self.proxy_model.rowCount()):
+                try:
+                    # Get source model row index
+                    source_row = self.proxy_model.mapToSource(
+                        self.proxy_model.index(row, 0)).row()
+                    
+                    # Get X and Y coordinates (still at indices 9 and 10 in data array)
+                    x_coord = float(self.table_model.data[source_row][9])  # 좌표 X
+                    y_coord = float(self.table_model.data[source_row][10])  # 좌표 Y
+                    coordinates.append((x_coord, y_coord))
+                except (ValueError, IndexError) as e:
+                    debug_print(f"Error getting coordinates for row {row}: {e}", 0)
+            
+            # Set all markers with primary indicated
+            if coordinates:
+                self.image_viewer.set_multiple_markers(coordinates)
+                debug_print(f"Added {len(coordinates)} markers to the image", 1)
+            
+            # Fit the image to the window
+            self.image_viewer.image_display.fit_to_window()
+            
+            # Update status message
+            self.statusBar().showMessage(f"Loaded image for {prefix} with {len(coordinates)} markers", 3000)
+        else:
+            debug_print(f"Failed to load image for prefix: {prefix}", 0)
+
+    def try_set_marker_from_table(self, prefix):
+        """Try to find coordinates in the filtered table and set a marker"""
+        # Look through the visible (filtered) rows for the first row with this prefix
+        for row in range(self.proxy_model.rowCount()):
+            proxy_idx = self.proxy_model.index(row, 11)  # 11 is the column for "사진 이름"
+            photo_name = self.proxy_model.data(proxy_idx)
+            
+            if photo_name == prefix:
+                # Found a matching row, map to source model
+                source_row = self.proxy_model.mapToSource(proxy_idx).row()
+                
+                try:
+                    # Get coordinates
+                    x_coord = float(self.table_model.data[source_row][9])  # 좌표 X
+                    y_coord = float(self.table_model.data[source_row][10])  # 좌표 Y
+                    debug_print(f"Found coordinates for {prefix}: X={x_coord}, Y={y_coord}", 1)
+                    
+                    # Set marker
+                    self.image_viewer.set_marker(x_coord, y_coord)
+                    
+                    # Check if we should center on the marker
+                    if self.center_checkbox.isChecked():
+                        # Center on marker with 200% zoom
+                        self.image_viewer.image_display.set_zoom_level(2.0)
+                        self.image_viewer.image_display.center_on_marker()
+                    else:
+                        # Fit to window
+                        self.image_viewer.image_display.fit_to_window()
+                
+                    # Found one, no need to continue
+                    break
+                    
+                except (ValueError, IndexError) as e:
+                    debug_print(f"Error getting coordinates: {e}", 0)
+
+    def filter_table(self, prefix):
+        """Filter the table to show only rows with the given prefix"""
+        debug_print(f"Filtering table to show: {prefix or 'All'}", 1)
+        
+        # Update all buttons to unchecked except the clicked one
+        for i in range(self.filter_layout.count()):
+            item = self.filter_layout.itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), QPushButton):
+                widget = item.widget()
+                if (widget.text() == "All" and prefix == "") or (widget.text() == prefix):
+                    widget.setChecked(True)
+                    widget.setStyleSheet("background-color: #e6f2ff; font-weight: bold;")
+                else:
+                    widget.setChecked(False)
+                    widget.setStyleSheet("")
+        
+        # Store current filter
+        self.current_filter = prefix
+        
+        # Apply filter to the proxy model - note that column 11 in data becomes column 12 in display
+        self.proxy_model.setFilterKeyColumn(12)  # Filter on "사진 이름" column
+        self.proxy_model.setFilterFixedString(prefix)
+        
+        # Update status bar with count
+        filtered_count = self.proxy_model.rowCount()
+        total_count = self.table_model.rowCount()
+        
+        if prefix:
+            self.statusBar().showMessage(f"Showing {filtered_count} of {total_count} records for {prefix}", 5000)
+        else:
+            self.statusBar().showMessage(f"Showing all {total_count} records", 5000)
     
     def on_row_selected(self, selected, deselected):
         """Handle row selection in the table view"""
         indexes = selected.indexes()
         if indexes:
-            # Get the selected row
-            row = indexes[0].row()
-            debug_print(f"Row {row} selected", 1)
+            # Get the selected row - use the proxy model index
+            proxy_row = indexes[0].row()
+            # Map to the source model
+            source_row = self.proxy_model.mapToSource(indexes[0]).row()
+            debug_print(f"Row {proxy_row} selected (source row: {source_row})", 1)
             
             # Get the photo name from the selected row
-            photo_name = self.table_model.get_photo_name(row)
+            photo_name = self.table_model.get_photo_name(source_row)
             debug_print(f"Photo name: {photo_name}", 1)
             
             # Try to find and display the corresponding image
             if photo_name:
                 success = self.image_viewer.set_image_by_name(photo_name)
                 if success:
-                    # Get the X and Y coordinates from the table (columns 9 and 10)
-                    try:
-                        x_coord = float(self.table_model.data[row][9])  # 좌표 X
-                        y_coord = float(self.table_model.data[row][10])  # 좌표 Y
-                        debug_print(f"Coordinates from table: X={x_coord}, Y={y_coord}", 1)
+                    # Collect coordinates for all rows with this photo name
+                    coordinates = []
+                    primary_index = None
+                    
+                    # Loop through all rows in the source model to find matching photo names
+                    for row in range(self.table_model.rowCount()):
+                        row_photo_name = self.table_model.get_photo_name(row)
+                        if row_photo_name == photo_name:
+                            try:
+                                # Note: The actual columns in the data are now at index-1 due to sequence column
+                                x_coord = float(self.table_model.data[row][9])  # 좌표 X (still at index 9 in data array)
+                                y_coord = float(self.table_model.data[row][10])  # 좌표 Y (still at index 10 in data array)
+                                coordinates.append((x_coord, y_coord))
+                                
+                                # If this is the selected row, mark its index
+                                if row == source_row:
+                                    primary_index = len(coordinates) - 1
+                                
+                            except (ValueError, IndexError) as e:   
+                                debug_print(f"Error getting coordinates for row {row}: {e}", 0)
+                    
+                    # Set all markers with primary indicated
+                    if coordinates:
+                        self.image_viewer.set_multiple_markers(coordinates, primary_index)
+                        debug_print(f"Added {len(coordinates)} markers to the image (primary: {primary_index})", 1)
                         
-                        # Set marker regardless of centering option
-                        self.image_viewer.set_marker(x_coord, y_coord)
-                        
-                        # Check if we should center on the marker
+                        # Check if we should center on the selected marker
                         if self.center_checkbox.isChecked():
                             # Center on marker with 200% zoom
                             debug_print("Centering enabled: Setting zoom level to 200%", 1)
@@ -902,9 +1303,7 @@ class DikeFinderApp(QMainWindow):
                             # Fit the image to the window instead of just resetting to 100%
                             debug_print("Centering disabled: Fitting image to window", 1)
                             self.image_viewer.image_display.fit_to_window()
-                            
-                    except (ValueError, IndexError) as e:
-                        debug_print(f"Error setting marker: {e}", 0)
+                    
                 elif self.image_viewer.image_dir:
                     QMessageBox.warning(
                         self, 
@@ -947,6 +1346,9 @@ class DikeFinderApp(QMainWindow):
         if success:
             filename = os.path.basename(excel_path)
             self.statusBar().showMessage(f"Loaded data from {filename}", 5000)
+            
+            # Update image filter buttons after loading data
+            self.update_image_filter_buttons()
         
         return success
     
@@ -964,12 +1366,30 @@ class DikeFinderApp(QMainWindow):
             
             if success:
                 self.statusBar().showMessage(f"Loaded data from {os.path.basename(excel_path)}", 5000)
+                
+                # Update image filter buttons after loading data
+                self.update_image_filter_buttons()
             else:
                 QMessageBox.warning(
                     self, 
                     "Error Loading Excel",
                     f"Failed to load data from the selected Excel file."
                 )
+
+
+# We need to customize the proxy model to reset sequence numbers in filtered view
+class SequentialNumberProxyModel(QSortFilterProxyModel):
+    def data(self, index, role=Qt.DisplayRole):
+        # For the sequence number column, we'll return the visible row position + 1
+        if index.column() == 0:
+            if role == Qt.DisplayRole:
+                # Return the visual position of this row + 1
+                return str(index.row() + 1)
+            elif role == Qt.UserRole:  # For sorting
+                return index.row() + 1
+        
+        # For all other columns, use the source model data
+        return super().data(index, role)
 
 
 if __name__ == "__main__":
