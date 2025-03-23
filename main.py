@@ -90,6 +90,7 @@ class DikeTableModel(QAbstractTableModel):
                         # Add empty value for missing columns
                         data_row.append("")
                 data_list.append(data_row)
+                debug_print(f"Data row: {data_row}", 2)
             
             # Update model data
             debug_print(f"Updating model with {len(data_list)} rows of data", 1)
@@ -354,16 +355,19 @@ class ImageViewer(QWidget):
         """Clear the marker"""
         self.image_display.clear_marker()
 
-    def set_multiple_markers(self, coordinates_list, primary_index=None):
+    def set_multiple_markers(self, coordinates_list, primary_index=None, sequence_numbers=None):
         """Set multiple markers from a list of coordinates
         
         Args:
             coordinates_list: List of (x, y) coordinate pairs
             primary_index: Index of the primary marker (if any)
+            sequence_numbers: List of sequence numbers for the markers
         """
         # Convert all coordinates to pixel positions
         markers = []
         primary_marker = None
+        marker_numbers = []
+        primary_number = None
         
         pixels_per_cm = 96 / 2.54  # Convert cm to pixels
         
@@ -381,11 +385,15 @@ class ImageViewer(QWidget):
             # Set as primary marker if it matches the primary index
             if i == primary_index:
                 primary_marker = point
+                if sequence_numbers and i < len(sequence_numbers):
+                    primary_number = sequence_numbers[i]
             else:
                 markers.append(point)
+                if sequence_numbers and i < len(sequence_numbers):
+                    marker_numbers.append(sequence_numbers[i])
         
         # Set markers
-        self.image_display.set_multiple_markers(markers, primary_marker)
+        self.image_display.set_multiple_markers(markers, primary_marker, marker_numbers, primary_number)
 
 
 class ImageDisplayWidget(QWidget):
@@ -417,6 +425,7 @@ class ImageDisplayWidget(QWidget):
         # Variables for markers
         self.marker_position = None  # Primary marker
         self.secondary_markers = []  # Additional markers
+        self.marker_numbers = []     # Sequence numbers for markers
         self.marker_radius = 20
         self.marker_color = QColor(255, 0, 0, 128)  # Semi-transparent red
         
@@ -486,10 +495,11 @@ class ImageDisplayWidget(QWidget):
             if hasattr(self, 'secondary_markers') and self.secondary_markers:
                 # Use a more transparent color for secondary markers
                 secondary_color = QColor(255, 0, 0, 60)  # Very transparent red
-                painter.setPen(QPen(secondary_color, 2))
+                #painter.setPen(QPen(secondary_color, 2))
+                painter.setPen(QPen(Qt.white, 2))
                 painter.setBrush(secondary_color)
                 
-                for marker_pos in self.secondary_markers:
+                for i, marker_pos in enumerate(self.secondary_markers):
                     if marker_pos:
                         # Calculate marker position with zoom and pan
                         marker_x = x + int(marker_pos.x() * self.scale_factor)
@@ -504,6 +514,25 @@ class ImageDisplayWidget(QWidget):
                             scaled_radius,
                             scaled_radius
                         )
+                        
+                        # Draw sequence number on marker if available
+                        if hasattr(self, 'marker_numbers') and i < len(self.marker_numbers):
+                            painter.setPen(QPen(Qt.white, 2))
+                            # Set font for number
+                            font = painter.font()
+                            font.setBold(True)
+                            scaled_font_size = max(8, int(9 * self.scale_factor))
+                            font.setPointSize(scaled_font_size)
+                            painter.setFont(font)
+                            
+                            # Draw number centered in marker
+                            text_rect = QRect(
+                                marker_x - scaled_radius, 
+                                marker_y - scaled_radius,
+                                scaled_radius * 2, 
+                                scaled_radius * 2
+                            )
+                            painter.drawText(text_rect, Qt.AlignCenter, str(self.marker_numbers[i]))
             
             # Draw primary marker if present (larger and more visible)
             if self.marker_position:
@@ -520,6 +549,25 @@ class ImageDisplayWidget(QWidget):
                     scaled_radius,
                     scaled_radius
                 )
+                
+                # Draw sequence number on primary marker if available
+                if hasattr(self, 'primary_marker_number') and self.primary_marker_number is not None:
+                    painter.setPen(QPen(Qt.white, 2))
+                    # Set font for number
+                    font = painter.font()
+                    font.setBold(True)
+                    scaled_font_size = max(10, int(12 * self.scale_factor))
+                    font.setPointSize(scaled_font_size)
+                    painter.setFont(font)
+                    
+                    # Draw number centered in marker
+                    text_rect = QRect(
+                        marker_x - scaled_radius, 
+                        marker_y - scaled_radius,
+                        scaled_radius * 2, 
+                        scaled_radius * 2
+                    )
+                    painter.drawText(text_rect, Qt.AlignCenter, str(self.primary_marker_number))
         
     def wheelEvent(self, event):
         """Handle mouse wheel for zooming"""
@@ -686,6 +734,8 @@ class ImageDisplayWidget(QWidget):
         """Clear all markers"""
         self.marker_position = None
         self.secondary_markers = []
+        self.marker_numbers = []
+        self.primary_marker_number = None
         self.update()
     
     def center_on_marker(self):
@@ -812,18 +862,24 @@ class ImageDisplayWidget(QWidget):
         self.zoom_changed.emit(self.scale_factor)
         self.update()
 
-    def set_multiple_markers(self, markers, primary_marker=None):
-        """Set multiple markers at specified coordinates
+    def set_multiple_markers(self, markers, primary_marker=None, marker_numbers=None, primary_number=None):
+        """Set multiple markers at specified coordinates with sequence numbers
         
         Args:
             markers: List of (x, y) tuples for marker positions
             primary_marker: Optional (x, y) tuple for the primary marker position
+            marker_numbers: List of sequence numbers for markers
+            primary_number: Sequence number for primary marker
         """
         debug_print(f"Setting {len(markers)} markers", 2)
         
         # Clear existing markers
         self.marker_position = primary_marker  # Keep the primary marker for traditional functionality
         self.secondary_markers = markers if markers else []  # Add secondary markers
+        
+        # Store sequence numbers
+        self.marker_numbers = marker_numbers if marker_numbers else []
+        self.primary_marker_number = primary_number
         
         # Update the display
         self.update()
@@ -1000,6 +1056,9 @@ class DikeFinderApp(QMainWindow):
         # Connect table selection to image loading
         self.table_view.selectionModel().selectionChanged.connect(self.on_row_selected)
         
+        # Set initial sort order - sequence column (0) in ascending order
+        self.table_view.sortByColumn(0, Qt.AscendingOrder)
+        
         # Add widgets to splitter
         self.splitter.addWidget(self.image_viewer)
         self.splitter.addWidget(self.table_view)
@@ -1154,23 +1213,26 @@ class DikeFinderApp(QMainWindow):
             
             # Collect coordinates for all visible rows that match this prefix
             coordinates = []
+            sequence_numbers = []
             
-            for row in range(self.proxy_model.rowCount()):
+            for proxy_row in range(self.proxy_model.rowCount()):
                 try:
                     # Get source model row index
                     source_row = self.proxy_model.mapToSource(
-                        self.proxy_model.index(row, 0)).row()
+                        self.proxy_model.index(proxy_row, 0)).row()
                     
                     # Get X and Y coordinates (still at indices 9 and 10 in data array)
                     x_coord = float(self.table_model.data[source_row][9])  # 좌표 X
                     y_coord = float(self.table_model.data[source_row][10])  # 좌표 Y
                     coordinates.append((x_coord, y_coord))
+                    # Use the display sequence number (proxy_row + 1)
+                    sequence_numbers.append(proxy_row + 1)
                 except (ValueError, IndexError) as e:
-                    debug_print(f"Error getting coordinates for row {row}: {e}", 0)
+                    debug_print(f"Error getting coordinates for row {proxy_row}: {e}", 0)
             
             # Set all markers with primary indicated
             if coordinates:
-                self.image_viewer.set_multiple_markers(coordinates)
+                self.image_viewer.set_multiple_markers(coordinates, None, sequence_numbers)
                 debug_print(f"Added {len(coordinates)} markers to the image", 1)
             
             # Fit the image to the window
@@ -1268,6 +1330,7 @@ class DikeFinderApp(QMainWindow):
                 if success:
                     # Collect coordinates for all rows with this photo name
                     coordinates = []
+                    sequence_numbers = []
                     primary_index = None
                     
                     # Loop through all rows in the source model to find matching photo names
@@ -1280,16 +1343,26 @@ class DikeFinderApp(QMainWindow):
                                 y_coord = float(self.table_model.data[row][10])  # 좌표 Y (still at index 10 in data array)
                                 coordinates.append((x_coord, y_coord))
                                 
+                                # Find the display sequence number for this row
+                                for proxy_row in range(self.proxy_model.rowCount()):
+                                    if self.proxy_model.mapToSource(self.proxy_model.index(proxy_row, 0)).row() == row:
+                                        # Add the sequence number (proxy_row + 1)
+                                        sequence_numbers.append(proxy_row + 1)
+                                        break
+                                else:
+                                    # If row not found in proxy model (filtered out), use source row + 1
+                                    sequence_numbers.append(row + 1)
+                                
                                 # If this is the selected row, mark its index
                                 if row == source_row:
                                     primary_index = len(coordinates) - 1
                                 
-                            except (ValueError, IndexError) as e:   
+                            except (ValueError, IndexError) as e:
                                 debug_print(f"Error getting coordinates for row {row}: {e}", 0)
                     
                     # Set all markers with primary indicated
                     if coordinates:
-                        self.image_viewer.set_multiple_markers(coordinates, primary_index)
+                        self.image_viewer.set_multiple_markers(coordinates, primary_index, sequence_numbers)
                         debug_print(f"Added {len(coordinates)} markers to the image (primary: {primary_index})", 1)
                         
                         # Check if we should center on the selected marker
@@ -1379,6 +1452,10 @@ class DikeFinderApp(QMainWindow):
 
 # We need to customize the proxy model to reset sequence numbers in filtered view
 class SequentialNumberProxyModel(QSortFilterProxyModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._sort_ascending = True  # Track sort direction
+    
     def data(self, index, role=Qt.DisplayRole):
         # For the sequence number column, we'll return the visible row position + 1
         if index.column() == 0:
@@ -1386,10 +1463,22 @@ class SequentialNumberProxyModel(QSortFilterProxyModel):
                 # Return the visual position of this row + 1
                 return str(index.row() + 1)
             elif role == Qt.UserRole:  # For sorting
-                return index.row() + 1
+                # Return a value that will sort properly in the expected direction
+                row_num = index.row() + 1
+                return row_num
         
         # For all other columns, use the source model data
         return super().data(index, role)
+
+    def sort(self, column, order):
+        # Call the parent class's sort method
+        super().sort(column, order)
+        
+        # If we sorted by sequence number, we need to invalidate our display
+        # since the row numbers need to be recalculated
+        if column == 0:
+            self.beginResetModel()
+            self.endResetModel()
 
 
 if __name__ == "__main__":
