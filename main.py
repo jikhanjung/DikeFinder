@@ -1491,7 +1491,7 @@ if __name__ == "__main__":
 ''' 
 How to make an exe file
 
-pyinstaller --name "DikeFinder_v0.0.1.exe" --onefile --noconsole main.py
+pyinstaller --name "DikeFinder_v0.0.2.exe" --onefile --noconsole main.py
 pyinstaller --onedir --noconsole --add-data "icons/*.png;icons" --add-data "translations/*.qm;translations" --add-data "migrations/*;migrations" --icon="icons/Modan2_2.png" --noconfirm Modan2.py
 #--upx-dir=/path/to/upx
 
@@ -1504,6 +1504,4 @@ pylupdate5 Modan2.py ModanComponents.py ModanDialogs.py -ts translations/Modan2_
 pylupdate5 Modan2.py ModanComponents.py ModanDialogs.py -ts translations/Modan2_ja.ts
 
 linguist
-
-
 '''
