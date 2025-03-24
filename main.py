@@ -433,7 +433,7 @@ class ImageDisplayWidget(QWidget):
         self.setMinimumSize(500, 500)
         self.placeholder_color = Qt.lightGray
         
-    def get_adaptive_zoom_step(self):
+    def get_adaptive_zoom_step(self, steps):
         """Calculate adaptive zoom step based on current zoom level with asymmetrical behavior"""
         if steps > 0:  # Zooming in
             # For zooming in, use exponential scaling for dramatic effect
