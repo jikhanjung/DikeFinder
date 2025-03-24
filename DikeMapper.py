@@ -11,6 +11,7 @@ from PyQt5.QtWebChannel import QWebChannel
 import json
 import csv
 import re
+import math
 
 # Try to import WebEngine components, but continue even if they're not available
 try:
@@ -93,6 +94,11 @@ if WEB_ENGINE_AVAILABLE:
             self.info_button.clicked.connect(self.activate_info_tool)
             self.info_button.setCheckable(True)
             
+            self.distance_button = QPushButton("Distance")
+            self.distance_button.setToolTip("Measure distance between points on the map")
+            self.distance_button.clicked.connect(self.activate_distance_tool)
+            self.distance_button.setCheckable(True)
+            
             self.add_to_table_button = QPushButton("Add to Table")
             self.add_to_table_button.setToolTip("Add current geological information to the table")
             self.add_to_table_button.clicked.connect(self.add_current_info_to_table)
@@ -108,6 +114,7 @@ if WEB_ENGINE_AVAILABLE:
             self.coords_label = QLabel("Coordinates: ")
             
             tools_layout.addWidget(self.info_button)
+            tools_layout.addWidget(self.distance_button)
             tools_layout.addWidget(self.info_label)
             tools_layout.addWidget(self.coords_label)
             tools_layout.addWidget(self.add_to_table_button)
@@ -152,10 +159,11 @@ if WEB_ENGINE_AVAILABLE:
             
             # Create the actual table for geological data
             self.geo_table = QTableWidget()
-            self.geo_table.setColumnCount(6)
+            self.geo_table.setColumnCount(8)  # Increased from 6 to 8 for distance and angle
             self.geo_table.setHorizontalHeaderLabels(["기호 (Symbol)", "지층 (Stratum)", 
                                                     "대표암상 (Rock Type)", "시대 (Era)", 
-                                                    "도폭 (Map Sheet)", "주소 (Address)"])
+                                                    "도폭 (Map Sheet)", "주소 (Address)",
+                                                    "거리 (Distance)", "각도 (Angle)"])
             self.geo_table.horizontalHeader().setStretchLastSection(True)
             self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
             
@@ -169,9 +177,11 @@ if WEB_ENGINE_AVAILABLE:
             # Create JavaScript handler for callbacks
             class JSHandler(QObject):
                 popupInfoReceived = pyqtSignal(str)
+                distanceMeasured = pyqtSignal(str)
             
             self.js_handler = JSHandler()
             self.js_handler.popupInfoReceived.connect(self.handle_popup_info)
+            self.js_handler.distanceMeasured.connect(self.handle_distance_measurement)
             
             # Track login state
             self.login_attempted = False
@@ -186,6 +196,12 @@ if WEB_ENGINE_AVAILABLE:
             # Current coordinates
             self.current_lat = None
             self.current_lng = None
+
+            # current distance measurement
+            self.current_distance_measurement = None
+
+            # current angle measurement
+            self.current_angle_measurement = None
             
             # Store the target map URL
             self.target_map_url = "https://data.kigam.re.kr/mgeo/map/main.do?process=geology_50k"
@@ -600,6 +616,12 @@ if WEB_ENGINE_AVAILABLE:
                     window._lastClickCoordinates = coordInfo;
                 };
                 
+                // Add distance measurement handler
+                window.qt.distanceMeasured = function(distance) {
+                    console.log('Distance measured:', distance);
+                    window._lastDistanceMeasurement = distance;
+                };
+                
                 // Debug function to dump OpenLayers information
                 window.dumpOpenLayersInfo = function() {
                     var info = { objects: [] };
@@ -971,6 +993,103 @@ if WEB_ENGINE_AVAILABLE:
             
             debug_print("Adding direct coordinate capture", 0)
             self.web_view.page().runJavaScript(direct_capture, lambda result: debug_print(f"Direct capture result: {result}", 0))
+            
+            # Add distance measurement monitoring with cursor following
+            distance_monitor = """
+            (function() {
+                console.log('Setting up distance measurement monitoring');
+                
+                // Track measurement state
+                window._distanceMeasurementState = {
+                    started: false,
+                    startPoint: null
+                };
+
+                // Function to check for distance measurement popup
+                function checkForDistancePopup() {
+                    // Look for distance measurement popup that follows cursor
+                    var popups = document.querySelectorAll('.ol-popup, .popupLayer, .popup-layer, div[class*="popup"], div[class*="measure"]');
+                    for (var i = 0; i < popups.length; i++) {
+                        var popup = popups[i];
+                        if (popup.offsetWidth > 0 && popup.offsetHeight > 0) {  // Check if visible
+                            var content = popup.innerText || popup.textContent;
+                            if (content) {
+                                console.log('Found popup content:', content);
+                                // Check if this is a distance measurement popup
+                                if (content.includes('km') || content.includes('m')) {
+                                    console.log('Found distance measurement popup:', content);
+                                    return content;
+                                }
+                            }
+                        }
+                    }
+                    return null;
+                }
+
+                // Function to monitor mouse movement for distance popup
+                function setupMouseMoveMonitoring() {
+                    document.addEventListener('mousemove', function(e) {
+                        if (window._distanceToolActive) {
+                            var content = checkForDistancePopup();
+                            if (content) {
+                                window._lastDistancePopup = content;
+                            }
+                        }
+                    });
+                }
+
+                // Add click handler for distance measurement
+                if (typeof window._distanceClickHandler === 'undefined') {
+                    window._distanceClickHandler = function(event) {
+                        if (!window._distanceToolActive) return;
+                        
+                        var state = window._distanceMeasurementState;
+                        if (!state.started) {
+                            // First click - start measurement
+                            state.started = true;
+                            state.startPoint = event.coordinate;
+                            console.log('Distance measurement started at:', state.startPoint);
+                        } else {
+                            // Second click - capture the current distance
+                            var currentDistance = window._lastDistancePopup || checkForDistancePopup();
+                            if (currentDistance) {
+                                console.log('Captured distance on second click:', currentDistance);
+                                window.qt.distanceMeasured(currentDistance);
+                                
+                                // Reset measurement state
+                                state.started = false;
+                                state.startPoint = null;
+                            }
+                        }
+                    };
+
+                    // Find the map instance
+                    var mapElement = document.querySelector('.ol-viewport');
+                    if (mapElement) {
+                        for (var prop in mapElement) {
+                            if (prop.startsWith('__ol_')) {
+                                try {
+                                    var olProp = mapElement[prop];
+                                    if (olProp && olProp.map) {
+                                        olProp.map.on('click', window._distanceClickHandler);
+                                        console.log('Added distance click handler to map');
+                                        // Set up mouse move monitoring
+                                        setupMouseMoveMonitoring();
+                                    }
+                                } catch (e) {
+                                    console.error('Error setting up map handlers:', e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return "Distance measurement monitoring set up with cursor following";
+            })();
+            """
+            
+            debug_print("Setting up distance measurement monitoring", 0)
+            self.web_view.page().runJavaScript(distance_monitor, lambda result: debug_print(f"Distance monitoring setup: {result}", 0))
         
         def poll_for_popup_content(self):
             """Poll JavaScript for popup content"""
@@ -1133,8 +1252,25 @@ if WEB_ENGINE_AVAILABLE:
                 self.geo_table.setItem(row_position, 4, QTableWidgetItem(info_dict.get('map_sheet', '')))
                 self.geo_table.setItem(row_position, 5, QTableWidgetItem(info_dict.get('address', '')))
                 
+                # Add distance and angle if available
+                if hasattr(self, 'current_distance_measurement'):
+                    debug_print(f"Processing distance measurement: {self.current_distance_measurement}", 0)
+                    # Extract distance value and unit (now looking for numbers before 'm')
+                    #distance_match = re.search(r'(\d+\.?\d*)\s*m(?:\s|$|\|)', self.last_distance_measurement)
+                    
+                    #if distance_match:
+                    #    distance_value = distance_match.group(1)
+                    self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{self.current_distance_measurement} m"))
+                    debug_print(f"Added distance to table: {self.current_distance_measurement} m", 0)
+                    
+                    self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{self.current_angle_measurement}°"))
+                    debug_print(f"Added angle to table: {self.current_angle_measurement}°", 0)
+                    
+                else:
+                    debug_print("No last_distance_measurement available", 0)
+                
                 # Determine how many columns are needed for coordinates
-                needed_columns = 6  # Basic info columns
+                needed_columns = 8  # Basic info columns + distance + angle
                 
                 # Check if we have raw map coordinates or WGS84 coordinates
                 has_raw_coords = hasattr(self, 'current_raw_x') and hasattr(self, 'current_raw_y')
@@ -1142,15 +1278,15 @@ if WEB_ENGINE_AVAILABLE:
                 
                 if has_raw_coords or has_wgs84_coords:
                     if has_raw_coords and has_wgs84_coords:
-                        needed_columns = 10  # Both coordinate types (6 basic + 2 raw + 2 WGS84)
+                        needed_columns = 12  # Both coordinate types (8 basic + 2 raw + 2 WGS84)
                     else:
-                        needed_columns = 8  # Only one coordinate type (6 basic + 2 coords)
+                        needed_columns = 10  # Only one coordinate type (8 basic + 2 coords)
                     
                     # Expand the table if needed
                     if self.geo_table.columnCount() < needed_columns:
                         self.geo_table.setColumnCount(needed_columns)
                         headers = []
-                        for i in range(6):
+                        for i in range(8):  # First 8 columns (including distance and angle)
                             headers.append(self.geo_table.horizontalHeaderItem(i).text())
                         
                         if has_raw_coords and has_wgs84_coords:
@@ -1167,7 +1303,7 @@ if WEB_ENGINE_AVAILABLE:
                 
                 # Add raw map coordinates if available
                 if has_raw_coords:
-                    col_offset = 6  # Start after the basic info columns
+                    col_offset = 8  # Start after the basic info columns + distance + angle
                     self.geo_table.setItem(row_position, col_offset, QTableWidgetItem(str(self.current_raw_x)))
                     self.geo_table.setItem(row_position, col_offset + 1, QTableWidgetItem(str(self.current_raw_y)))
                     
@@ -1184,9 +1320,9 @@ if WEB_ENGINE_AVAILABLE:
                 if has_wgs84_coords:
                     # Determine where to place the WGS84 coordinates
                     if has_raw_coords:
-                        col_offset = 8  # After raw coordinates
+                        col_offset = 10  # After raw coordinates
                     else:
-                        col_offset = 6  # After basic info columns
+                        col_offset = 8  # After basic info columns + distance + angle
                     
                     self.geo_table.setItem(row_position, col_offset, QTableWidgetItem(str(self.current_lat)))
                     self.geo_table.setItem(row_position, col_offset + 1, QTableWidgetItem(str(self.current_lng)))
@@ -1400,6 +1536,27 @@ if WEB_ENGINE_AVAILABLE:
                     projection = coord_info.get('projection', 'Unknown')
                     
                     debug_print(f"Raw map coordinates: X={x_coord}, Y={y_coord} ({projection})", 0)
+                    
+                    # Calculate distance and angle if we have previous coordinates
+                    if hasattr(self, 'current_raw_x') and hasattr(self, 'current_raw_y'):
+                        # Calculate distance using the Pythagorean theorem
+                        dx = x_coord - self.current_raw_x
+                        dy = y_coord - self.current_raw_y
+                        distance = (dx**2 + dy**2)**0.5
+                        
+                        # Calculate angle in degrees (0° is east, positive is counterclockwise)
+                        angle = math.degrees(math.atan2(dy, dx))
+                        if angle < 0:
+                            angle += 360
+                        
+                        # Store the calculated values with consistent formatting
+                        distance_str = f"{distance:.2f}"
+                        angle_str = f"{angle:.1f}"
+                        self.current_distance_measurement = distance_str
+                        self.current_angle_measurement = angle_str
+                        self.last_distance_measurement = f"{distance_str} m | {angle_str}°"
+                        debug_print(f"Stored raw coordinates measurement: distance={distance_str}m, angle={angle_str}°", 0)
+                    
                     self.update_raw_coordinates(x_coord, y_coord, projection, coord_info)
                     
                 # If lat/lng is available (converted to WGS84), also update those
@@ -1407,6 +1564,34 @@ if WEB_ENGINE_AVAILABLE:
                 lng = coord_info.get('lng')
                 
                 if lat is not None and lng is not None:
+                    # Calculate distance and angle using WGS84 coordinates if we have previous coordinates
+                    if hasattr(self, 'current_lat') and hasattr(self, 'current_lng'):
+                        # Calculate distance using the Haversine formula
+                        R = 6371000  # Earth's radius in meters
+                        lat1, lon1 = math.radians(self.current_lat), math.radians(self.current_lng)
+                        lat2, lon2 = math.radians(lat), math.radians(lng)
+                        
+                        dlat = lat2 - lat1
+                        dlon = lon2 - lon1
+                        
+                        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+                        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+                        
+                        distance = R * c  # Distance in meters
+                        
+                        # Calculate angle in degrees (0° is north, positive is clockwise)
+                        y = math.sin(dlon) * math.cos(lat2)
+                        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+                        angle = math.degrees(math.atan2(y, x))
+                        if angle < 0:
+                            angle += 360
+                        
+                        # Store the calculated values with consistent formatting
+                        distance_str = f"{distance:.1f}"
+                        angle_str = f"{angle:.1f}"
+                        self.last_distance_measurement = f"{distance_str} m | {angle_str}°"
+                        debug_print(f"Stored WGS84 measurement: distance={distance_str}m, angle={angle_str}°", 0)
+                    
                     self.update_coordinates(lat, lng)
                 
                 # Clear the coordinates in JavaScript
@@ -1426,26 +1611,72 @@ if WEB_ENGINE_AVAILABLE:
             self.current_raw_y = y
             self.current_projection = projection
             
-            # Update coordinate display with raw coordinates
-            self.coords_label.setText(f"Coordinates: X {x:.2f}, Y {y:.2f} ({projection})")
+            # Build the coordinate display string
+            coord_display = f"Map: X {x:.2f}, Y {y:.2f} ({projection})"
             
-            # If we have lat/lng from coord_info, update those too
+            # Add WGS84 coordinates if available
             if coord_info and 'lat' in coord_info and 'lng' in coord_info:
                 lat = coord_info['lat']
                 lng = coord_info['lng']
                 self.current_lat = lat
                 self.current_lng = lng
-                
-                # Update the display to show both raw and WGS84 coordinates
-                self.coords_label.setText(
-                    f"Map: X {x:.2f}, Y {y:.2f} | WGS84: Lat {lat:.6f}, Lng {lng:.6f}"
-                )
+                coord_display += f" | WGS84: Lat {lat:.6f}, Lng {lng:.6f}"
             
-            # Indicate if we have geological info that can be added to the table
-            if self.current_geo_info:
-                self.add_to_table_button.setEnabled(True)
+            # Add distance and angle if available
+            if hasattr(self, 'last_distance_measurement'):
+                debug_print(f"Processing last_distance_measurement: {self.last_distance_measurement}", 0)
+                # Extract distance value and unit
+                distance_match = re.search(r'(\d+\.?\d*)\s*(m|km)', self.last_distance_measurement)
+                if distance_match:
+                    distance_value = distance_match.group(1)
+                    distance_unit = distance_match.group(2)
+                    coord_display += f" | Distance: {distance_value} {distance_unit}"
+                    debug_print(f"Added distance to display: {distance_value} {distance_unit}", 0)
+                else:
+                    debug_print("No distance match found in last_distance_measurement", 0)
                 
-            self.statusBar().showMessage(f"Coordinates updated", 2000)
+                # Extract angle if available
+                angle_match = re.search(r'(\d+\.?\d*)\s*°', self.last_distance_measurement)
+                if angle_match:
+                    angle_value = angle_match.group(1)
+                    coord_display += f" | Angle: {angle_value}°"
+                    debug_print(f"Added angle to display: {angle_value}°", 0)
+                else:
+                    debug_print("No angle match found in last_distance_measurement", 0)
+            else:
+                debug_print("No last_distance_measurement available", 0)
+            
+            # Update the coordinate display
+            self.coords_label.setText(coord_display)
+            debug_print(f"Updated coordinate display: {coord_display}", 0)
+            
+            # Update the info label if we have geological information
+            if self.current_geo_info:
+                # Parse the geological information
+                info_dict = self.parse_geological_info(self.current_geo_info)
+                if info_dict:
+                    # Format a compact display string with geological info
+                    compact_info = f"Symbol: {info_dict.get('symbol', 'N/A')} | Stratum: {info_dict.get('stratum', 'N/A')}"
+                    
+                    # Add distance and angle to the info display if available
+                    if hasattr(self, 'last_distance_measurement'):
+                        if distance_match:
+                            compact_info += f" | Distance: {distance_value} {distance_unit}"
+                            debug_print(f"Added distance to info display: {distance_value} {distance_unit}", 0)
+                        if angle_match:
+                            compact_info += f" | Angle: {angle_value}°"
+                            debug_print(f"Added angle to info display: {angle_value}°", 0)
+                    
+                    self.info_label.setText(compact_info)
+                    self.info_label.setStyleSheet("background-color: rgba(220, 255, 220, 240); padding: 2px; border-radius: 3px; border: 1px solid green;")
+                    debug_print(f"Updated info display: {compact_info}", 0)
+            
+            # Flash the coordinate label to indicate new data
+            current_style = self.coords_label.styleSheet()
+            self.coords_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 5px; border-radius: 3px; border: 1px solid blue;")
+            QTimer.singleShot(300, lambda: self.coords_label.setStyleSheet(current_style))
+            
+            self.statusBar().showMessage(f"Coordinates and measurements updated", 2000)
         
         def update_coordinates(self, lat, lng):
             """Update the displayed WGS84 coordinates and store them"""
@@ -1471,6 +1702,159 @@ if WEB_ENGINE_AVAILABLE:
                 QTimer.singleShot(300, lambda: self.coord_label.setStyleSheet(current_style))
                 
                 self.statusBar().showMessage(f"Map clicked at: {lat_formatted}, {lng_formatted}", 3000)
+
+        def activate_distance_tool(self, checked):
+            """Activate the distance measurement tool on the map"""
+            # Update the distance tool state
+            self.distance_tool_active = checked
+            
+            if checked:
+                # Uncheck the info button if it's checked
+                if self.info_button.isChecked():
+                    self.info_button.setChecked(False)
+                    self.info_tool_active = False
+                
+                debug_print(f"Distance tool activated", 0)
+                self.statusBar().showMessage("Distance tool activated. Click first point to start, click second point to capture distance.", 5000)
+                
+                # Update JavaScript state
+                self.web_view.page().runJavaScript(
+                    """
+                    window._distanceToolActive = true;
+                    window._distanceMeasurementState = {
+                        started: false,
+                        startPoint: null
+                    };
+                    """,
+                    lambda result: debug_print("Distance tool state initialized", 0)
+                )
+                
+                # Find and click the distance button in the map interface
+                script = """
+                (function() {
+                    console.log('Searching for distance button...');
+                    
+                    // Try to find the specific distance button
+                    var distanceButton = document.querySelector('a.btn_distance, a.btn_distance.active, a.btn_shape[class*="distance"]');
+                    
+                    if (!distanceButton) {
+                        console.log('Specific distance button not found, trying more general selectors');
+                        distanceButton = document.querySelector('.left_btn a[href*="javascript:void(0)"] img[src*="distance"]');
+                    }
+                    
+                    if (!distanceButton) {
+                        console.log('Still not found, trying by image alt text');
+                        var images = document.querySelectorAll('img');
+                        for (var i = 0; i < images.length; i++) {
+                            if (images[i].alt && (images[i].alt.includes('거리') || images[i].alt.includes('distance'))) {
+                                distanceButton = images[i].parentElement;
+                                console.log('Found distance button by image alt text');
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (distanceButton) {
+                        console.log('Found distance button:', distanceButton.outerHTML.substring(0, 100));
+                        // Save the element globally for debugging
+                        window._distanceButton = distanceButton;
+                        
+                        // Click it!
+                        distanceButton.click();
+                        
+                        // Check if it has the "active" class after clicking
+                        if (distanceButton.classList.contains('active')) {
+                            console.log('Distance button has active class - this is good');
+                        } else {
+                            console.log('Distance button does not have active class - attempting to add it');
+                            distanceButton.classList.add('active');
+                        }
+                        
+                        return "Distance tool activated: " + distanceButton.outerHTML.substring(0, 50);
+                    }
+                    
+                    return "Could not find distance measurement button";
+                })();
+                """
+                
+                debug_print("Injecting JavaScript to activate distance button", 0)
+                self.web_view.page().runJavaScript(script, self.handle_distance_tool_activation)
+            else:
+                debug_print("Distance tool deactivated", 0)
+                self.statusBar().showMessage("Distance tool deactivated", 3000)
+                
+                # Reset JavaScript state
+                self.web_view.page().runJavaScript(
+                    """
+                    window._distanceToolActive = false;
+                    window._distanceMeasurementState = {
+                        started: false,
+                        startPoint: null
+                    };
+                    if (window._distanceButton) {
+                        window._distanceButton.classList.remove('active');
+                        console.log('Removed active class from distance button');
+                    }
+                    """,
+                    lambda result: debug_print("Distance tool deactivated in JavaScript", 0)
+                )
+        
+        def handle_distance_tool_activation(self, result):
+            """Handle the result of activating the distance tool"""
+            debug_print(f"Distance tool activation result: {result}", 0)
+            
+            if "activated" in result.lower():
+                self.statusBar().showMessage("Distance tool activated. Click points on the map to measure distance.", 5000)
+            else:
+                self.distance_button.setChecked(False)
+                self.distance_tool_active = False
+                self.statusBar().showMessage(f"Could not activate distance tool: {result}", 5000)
+                
+                QMessageBox.warning(
+                    self,
+                    "Distance Tool Activation Failed",
+                    f"Could not find the distance measurement button on the map. Result: {result}\n\n"
+                    "Try these options:\n"
+                    "1. Click the distance measurement icon on the map manually\n"
+                    "2. Make sure the map is fully loaded\n"
+                    "3. Check if the map interface has a distance measurement button"
+                )
+
+        def handle_distance_measurement(self, distance_text):
+            """Handle a distance measurement"""
+            debug_print(f"Distance measurement received: {distance_text}", 0)
+            
+            # Extract distance and angle from the text
+            # Example format: "거리: 289.69 m | 각도: 256.7°" or similar
+            distance_match = re.search(r'(\d+\.?\d*)\s*m', distance_text)
+            angle_match = re.search(r'(\d+\.?\d*)\s*°', distance_text)
+            
+            if distance_match:
+                self.current_distance_measurement = distance_match.group(1)
+                debug_print(f"Extracted distance: {self.current_distance_measurement} m", 0)
+            
+            if angle_match:
+                self.current_angle_measurement = angle_match.group(1)
+                debug_print(f"Extracted angle: {self.current_angle_measurement}°", 0)
+            
+            # Update the info label with the measurement
+            measurement_display = f"Distance: {self.current_distance_measurement} m"
+            if hasattr(self, 'current_angle_measurement'):
+                measurement_display += f" | Angle: {self.current_angle_measurement}°"
+            
+            self.info_label.setText(measurement_display)
+            self.info_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 5px; border-radius: 3px; border: 1px solid blue;")
+            
+            # Flash the label to indicate new measurement
+            current_style = self.info_label.styleSheet()
+            self.info_label.setStyleSheet("background-color: rgba(120, 180, 255, 240); padding: 5px; border-radius: 3px; border: 2px solid blue;")
+            QTimer.singleShot(300, lambda: self.info_label.setStyleSheet(current_style))
+            
+            # Show the measurement in the status bar
+            self.statusBar().showMessage(f"Distance captured: {measurement_display}", 5000)
+            
+            # Store the last measurement
+            self.last_distance_measurement = distance_text
 
 else:
     class KIGAMMapWindow:
