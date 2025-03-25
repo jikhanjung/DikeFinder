@@ -12,6 +12,37 @@ import json
 import csv
 import re
 import math
+from geopy.distance import geodesic
+import peewee
+from peewee import *
+import datetime
+
+# Database setup
+db = SqliteDatabase('dikefinder.db')
+
+# Define database models
+class BaseModel(Model):
+    class Meta:
+        database = db
+
+class GeologicalRecord(BaseModel):
+    symbol = CharField(null=True)
+    stratum = CharField(null=True)
+    rock_type = CharField(null=True)
+    era = CharField(null=True)
+    map_sheet = CharField(null=True)
+    address = CharField(null=True)
+    distance = FloatField(null=True)
+    angle = FloatField(null=True)
+    x_coord_1 = FloatField(null=True)
+    y_coord_1 = FloatField(null=True)
+    lat_1 = FloatField(null=True)
+    lng_1 = FloatField(null=True)
+    x_coord_2 = FloatField(null=True)
+    y_coord_2 = FloatField(null=True)
+    lat_2 = FloatField(null=True)
+    lng_2 = FloatField(null=True)
+    created_date = DateTimeField(default=datetime.datetime.now)
 
 # Try to import WebEngine components, but continue even if they're not available
 try:
@@ -48,6 +79,9 @@ if WEB_ENGINE_AVAILABLE:
             self.setWindowTitle("KIGAM Geological Map")
             self.setGeometry(200, 200, 1000, 800)
             
+            # Initialize database
+            self.init_database()
+            
             # Create central widget and layout
             self.central_widget = QWidget()
             self.setCentralWidget(self.central_widget)
@@ -55,6 +89,10 @@ if WEB_ENGINE_AVAILABLE:
             
             # Settings for credential storage
             self.settings = QSettings("DikeFinder", "KIGAMMap")
+            
+            # Map view position and zoom storage
+            self.current_map_center = None
+            self.current_map_zoom = None
             
             # Add login controls
             login_layout = QHBoxLayout()
@@ -105,27 +143,37 @@ if WEB_ENGINE_AVAILABLE:
             self.add_to_table_button.setEnabled(False)  # Disabled until we have info
             
             # Add info display as a QLineEdit instead of a large text box
-            self.info_label = QLineEdit()
-            self.info_label.setReadOnly(True)
-            self.info_label.setPlaceholderText("Geological information will appear here")
-            self.info_label.setMinimumWidth(400)
+            self.geo_info_label = QLineEdit()
+            self.geo_info_label.setReadOnly(True)
+            self.geo_info_label.setPlaceholderText("Geological information will appear here")
+            self.geo_info_label.setMinimumWidth(200)  # Reduced minimum width
+            self.geo_info_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Allow horizontal stretching
             
-            # Add coordinate display
+            # Add distance/angle display
+            self.measurement_label = QLineEdit()
+            self.measurement_label.setReadOnly(True)
+            self.measurement_label.setPlaceholderText("Distance and angle measurements")
+            self.measurement_label.setMinimumWidth(150)  # Reduced minimum width
+            self.measurement_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Allow horizontal stretching
+            
+            # Add coordinate display with fixed width
             self.coords_label = QLabel("Coordinates: ")
+            self.coords_label.setMinimumWidth(200)  # Reduced minimum width
+            self.coords_label.setMaximumWidth(300)  # Reduced maximum width
             
+            # Create a QHBoxLayout for the tools and set size constraints
+            tools_layout.setSizeConstraint(QLayout.SetFixedSize)  # Prevent layout from expanding
+            
+            # Add widgets with appropriate size policies
             tools_layout.addWidget(self.info_button)
             tools_layout.addWidget(self.distance_button)
-            tools_layout.addWidget(self.info_label)
+            tools_layout.addWidget(self.geo_info_label, 2)  # Stretch factor of 2
+            tools_layout.addWidget(self.measurement_label, 1)  # Stretch factor of 1
             tools_layout.addWidget(self.coords_label)
             tools_layout.addWidget(self.add_to_table_button)
             tools_layout.addStretch(1)  # Add stretch to push other widgets to the right
             
             self.layout.addLayout(tools_layout)
-            
-            # Create web view
-            self.web_view = QWebEngineView()
-            self.web_view.loadFinished.connect(self.on_page_load_finished)
-            self.web_view.setMinimumHeight(500)
             
             # Create splitter for map and table
             self.splitter = QSplitter(Qt.Vertical)
@@ -135,6 +183,38 @@ if WEB_ENGINE_AVAILABLE:
             self.web_view_container = QWidget()
             self.web_view_layout = QVBoxLayout(self.web_view_container)
             self.web_view_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # Add map control buttons (moved here after web_view_layout is created)
+            map_controls_layout = QHBoxLayout()
+            
+            self.pan_left_button = QPushButton("←")
+            self.pan_left_button.setToolTip("Pan map to the west")
+            self.pan_left_button.clicked.connect(lambda: self.pan_map("west"))
+            
+            self.pan_right_button = QPushButton("→")
+            self.pan_right_button.setToolTip("Pan map to the east")
+            self.pan_right_button.clicked.connect(lambda: self.pan_map("east"))
+            
+            self.pan_up_button = QPushButton("↑")
+            self.pan_up_button.setToolTip("Pan map to the north")
+            self.pan_up_button.clicked.connect(lambda: self.pan_map("north"))
+            
+            self.pan_down_button = QPushButton("↓")
+            self.pan_down_button.setToolTip("Pan map to the south")
+            self.pan_down_button.clicked.connect(lambda: self.pan_map("south"))
+            
+            map_controls_layout.addWidget(self.pan_left_button)
+            map_controls_layout.addWidget(self.pan_right_button)
+            map_controls_layout.addWidget(self.pan_up_button)
+            map_controls_layout.addWidget(self.pan_down_button)
+            
+            self.web_view_layout.addLayout(map_controls_layout)
+            
+            # Create web view with size policy
+            self.web_view = QWebEngineView()
+            self.web_view.loadFinished.connect(self.on_page_load_finished)
+            self.web_view.setMinimumHeight(500)
+            self.web_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Allow the web view to expand
             self.web_view_layout.addWidget(self.web_view)
             self.splitter.addWidget(self.web_view_container)
             
@@ -145,15 +225,28 @@ if WEB_ENGINE_AVAILABLE:
             # Add table controls
             table_controls_layout = QHBoxLayout()
             
+            self.add_to_table_button = QPushButton("Add to Table")
+            self.add_to_table_button.setToolTip("Add current geological information to the table")
+            self.add_to_table_button.clicked.connect(self.add_current_info_to_table)
+            self.add_to_table_button.setEnabled(False)  # Initially disabled until we have data
+            
             self.clear_table_button = QPushButton("Clear Table")
+            self.clear_table_button.setToolTip("Clear all rows from the table")
             self.clear_table_button.clicked.connect(self.clear_geo_table)
             
             self.export_table_button = QPushButton("Export Table")
+            self.export_table_button.setToolTip("Export the table data to a CSV file")
             self.export_table_button.clicked.connect(self.export_geo_table)
             
+            self.delete_row_button = QPushButton("Delete Selected")
+            self.delete_row_button.setToolTip("Delete the selected row from the table")
+            self.delete_row_button.clicked.connect(self.delete_selected_row)
+            self.delete_row_button.setEnabled(False)  # Initially disabled until a row is selected
+            
+            table_controls_layout.addWidget(self.add_to_table_button)
+            table_controls_layout.addWidget(self.delete_row_button)
             table_controls_layout.addWidget(self.clear_table_button)
             table_controls_layout.addWidget(self.export_table_button)
-            table_controls_layout.addStretch(1)
             
             self.table_layout.addLayout(table_controls_layout)
             
@@ -166,6 +259,13 @@ if WEB_ENGINE_AVAILABLE:
                                                     "거리 (Distance)", "각도 (Angle)"])
             self.geo_table.horizontalHeader().setStretchLastSection(True)
             self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            
+            # Enable vertical scrollbar
+            self.geo_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.geo_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            
+            # Connect selection changed signal to enable/disable delete button
+            self.geo_table.itemSelectionChanged.connect(self.on_table_selection_changed)
             
             self.table_layout.addWidget(self.geo_table)
             
@@ -196,6 +296,15 @@ if WEB_ENGINE_AVAILABLE:
             # Current coordinates
             self.current_lat = None
             self.current_lng = None
+            self.current_raw_x = None
+            self.current_raw_y = None
+
+            self.previous_lat = None
+            self.previous_lng = None
+            self.previous_raw_x = None
+            self.previous_raw_y = None
+            self.wgs_distance = 0
+            self.wgs_angle = 0
 
             # current distance measurement
             self.current_distance_measurement = None
@@ -211,6 +320,94 @@ if WEB_ENGINE_AVAILABLE:
             
             # Load the KIGAM website - updated to the correct login URL
             self.web_view.load(QUrl("https://data.kigam.re.kr/auth/login?redirect=/mgeo/sub01/page02.do"))
+        
+        def init_database(self):
+            """Initialize the database and create tables if they don't exist"""
+            debug_print("Initializing database...", 0)
+            try:
+                db.connect()
+                db.create_tables([GeologicalRecord], safe=True)
+                debug_print("Database initialized successfully", 0)
+            except Exception as e:
+                debug_print(f"Error initializing database: {str(e)}", 0)
+                QMessageBox.warning(self, "Database Error", f"Error initializing database: {str(e)}")
+            finally:
+                if not db.is_closed():
+                    db.close()
+        
+        def load_data_from_database(self):
+            """Load geological records from the database into the table"""
+            debug_print("Loading data from database...", 0)
+            try:
+                db.connect()
+                records = GeologicalRecord.select().order_by(GeologicalRecord.created_date)
+                
+                # Clear the table first
+                self.geo_table.setRowCount(0)
+                
+                # Ensure we have enough columns
+                if self.geo_table.columnCount() < 16:
+                    self.geo_table.setColumnCount(16)
+                    headers = ["기호 (Symbol)", "지층 (Stratum)", 
+                               "대표암상 (Rock Type)", "시대 (Era)", 
+                               "도폭 (Map Sheet)", "주소 (Address)",
+                               "거리 (Distance)", "각도 (Angle)",
+                               "X 좌표 1", "Y 좌표 1", "위도 (Latitude) 1", "경도 (Longitude) 1",
+                               "X 좌표 2", "Y 좌표 2", "위도 (Latitude) 2", "경도 (Longitude) 2"]
+                    self.geo_table.setHorizontalHeaderLabels(headers)
+                
+                for record in records:
+                    row_position = self.geo_table.rowCount()
+                    self.geo_table.insertRow(row_position)
+                    
+                    # Add data to the cells
+                    self.geo_table.setItem(row_position, 0, QTableWidgetItem(record.symbol or ""))
+                    self.geo_table.setItem(row_position, 1, QTableWidgetItem(record.stratum or ""))
+                    self.geo_table.setItem(row_position, 2, QTableWidgetItem(record.rock_type or ""))
+                    self.geo_table.setItem(row_position, 3, QTableWidgetItem(record.era or ""))
+                    self.geo_table.setItem(row_position, 4, QTableWidgetItem(record.map_sheet or ""))
+                    self.geo_table.setItem(row_position, 5, QTableWidgetItem(record.address or ""))
+                    
+                    # Add distance and angle if available
+                    if record.distance is not None:
+                        self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{record.distance} m"))
+                    
+                    if record.angle is not None:
+                        self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{record.angle}°"))
+                    
+                    # Add coordinates
+                    if record.x_coord_1 is not None:
+                        self.geo_table.setItem(row_position, 8, QTableWidgetItem(str(record.x_coord_1)))
+                    
+                    if record.y_coord_1 is not None:
+                        self.geo_table.setItem(row_position, 9, QTableWidgetItem(str(record.y_coord_1)))
+                    
+                    if record.lat_1 is not None:
+                        self.geo_table.setItem(row_position, 10, QTableWidgetItem(str(record.lat_1)))
+                    
+                    if record.lng_1 is not None:
+                        self.geo_table.setItem(row_position, 11, QTableWidgetItem(str(record.lng_1)))
+                    
+                    if record.x_coord_2 is not None:
+                        self.geo_table.setItem(row_position, 12, QTableWidgetItem(str(record.x_coord_2)))
+                    
+                    if record.y_coord_2 is not None:
+                        self.geo_table.setItem(row_position, 13, QTableWidgetItem(str(record.y_coord_2)))
+                    
+                    if record.lat_2 is not None:
+                        self.geo_table.setItem(row_position, 14, QTableWidgetItem(str(record.lat_2)))
+                    
+                    if record.lng_2 is not None:
+                        self.geo_table.setItem(row_position, 15, QTableWidgetItem(str(record.lng_2)))
+                
+                self.statusBar().showMessage(f"Loaded {self.geo_table.rowCount()} records from database", 3000)
+                debug_print(f"Loaded {self.geo_table.rowCount()} records from database", 0)
+            except Exception as e:
+                debug_print(f"Error loading data from database: {str(e)}", 0)
+                QMessageBox.warning(self, "Database Error", f"Error loading data from database: {str(e)}")
+            finally:
+                if not db.is_closed():
+                    db.close()
         
         def load_saved_credentials(self):
             """Load saved credentials from settings and apply them"""
@@ -370,6 +567,13 @@ if WEB_ENGINE_AVAILABLE:
                 
                 # Set up monitoring for popups
                 self.setup_map_interaction_monitoring()
+                
+                # Restore previous map position and zoom after a short delay
+                # to allow the map to fully initialize
+                QTimer.singleShot(2000, self.restore_map_state)
+                
+                # Load geological data from database after map loading is complete
+                QTimer.singleShot(2500, self.load_data_from_database)
         
         def handle_login_form_check(self, result):
             """Handle the check for login form readiness"""
@@ -394,8 +598,8 @@ if WEB_ENGINE_AVAILABLE:
                 self.statusBar().showMessage("Info tool activated. Click on the map to see geological data.", 5000)
                 
                 # Update info label to show status
-                self.info_label.setStyleSheet("background-color: rgba(255, 255, 200, 220); padding: 5px; border-radius: 3px;")
-                self.info_label.setText("Activating info tool... please wait")
+                self.geo_info_label.setStyleSheet("background-color: rgba(255, 255, 200, 220); padding: 5px; border-radius: 3px;")
+                self.geo_info_label.setText("Activating info tool... please wait")
                 
                 # Set the flag in JavaScript to indicate the info tool is active
                 self.web_view.page().runJavaScript(
@@ -498,8 +702,8 @@ if WEB_ENGINE_AVAILABLE:
             else:
                 debug_print("Info tool deactivated", 0) # Always show this
                 self.statusBar().showMessage("Info tool deactivated", 3000)
-                self.info_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 5px; border-radius: 3px;")
-                self.info_label.setText("Info tool deactivated")
+                self.geo_info_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 5px; border-radius: 3px;")
+                self.geo_info_label.setText("Info tool deactivated")
                 
                 # Set the flag in JavaScript to indicate the info tool is inactive
                 self.web_view.page().runJavaScript(
@@ -523,8 +727,8 @@ if WEB_ENGINE_AVAILABLE:
             
             if "activated" in result.lower():
                 self.statusBar().showMessage("Info tool activated. Click on the map to see geological data.", 5000)
-                self.info_label.setStyleSheet("background-color: rgba(200, 255, 200, 220); padding: 5px; border-radius: 3px;")
-                self.info_label.setText("Info tool activated - Click on the map to view geological information")
+                self.geo_info_label.setStyleSheet("background-color: rgba(200, 255, 200, 220); padding: 5px; border-radius: 3px;")
+                self.geo_info_label.setText("Info tool activated - Click on the map to view geological information")
                 
                 # Check if we have monitoring set up
                 self.web_view.page().runJavaScript(
@@ -535,8 +739,8 @@ if WEB_ENGINE_AVAILABLE:
                 self.info_button.setChecked(False)
                 self.info_tool_active = False
                 self.statusBar().showMessage(f"Could not activate info tool: {result}", 5000)
-                self.info_label.setStyleSheet("background-color: rgba(255, 200, 200, 220); padding: 5px; border-radius: 3px;")
-                self.info_label.setText("Error: Could not find the info button on the map")
+                self.geo_info_label.setStyleSheet("background-color: rgba(255, 200, 200, 220); padding: 5px; border-radius: 3px;")
+                self.geo_info_label.setText("Error: Could not find the info button on the map")
                 
                 QMessageBox.warning(
                     self,
@@ -994,97 +1198,67 @@ if WEB_ENGINE_AVAILABLE:
             debug_print("Adding direct coordinate capture", 0)
             self.web_view.page().runJavaScript(direct_capture, lambda result: debug_print(f"Direct capture result: {result}", 0))
             
-            # Add distance measurement monitoring with cursor following
+            # Add distance measurement monitoring with click/doubleclick handling
             distance_monitor = """
             (function() {
                 console.log('Setting up distance measurement monitoring');
                 
-                // Track measurement state
-                window._distanceMeasurementState = {
-                    started: false,
-                    startPoint: null
-                };
+                // Track click timing for double click detection
+                window._lastClickTime = 0;
+                window._clickTimeout = null;
+                window._measurementStarted = false;
 
-                // Function to check for distance measurement popup
-                function checkForDistancePopup() {
-                    // Look for distance measurement popup that follows cursor
-                    var popups = document.querySelectorAll('.ol-popup, .popupLayer, .popup-layer, div[class*="popup"], div[class*="measure"]');
-                    for (var i = 0; i < popups.length; i++) {
-                        var popup = popups[i];
-                        if (popup.offsetWidth > 0 && popup.offsetHeight > 0) {  // Check if visible
-                            var content = popup.innerText || popup.textContent;
-                            if (content) {
-                                console.log('Found popup content:', content);
-                                // Check if this is a distance measurement popup
-                                if (content.includes('km') || content.includes('m')) {
-                                    console.log('Found distance measurement popup:', content);
-                                    return content;
-                                }
-                            }
+                // Function to check for static distance tooltip
+                function checkForStaticTooltip() {
+                    var staticTooltip = document.querySelector('.ol-overlaycontainer-stopevent .tooltip.tooltip-static');
+                    if (staticTooltip && staticTooltip.style.display !== 'none') {
+                        var content = staticTooltip.textContent.trim();
+                        console.log('Found static tooltip:', content);
+                        if (content && window.jsCallback) {
+                            window.jsCallback.handle_distance_measurement(content);
                         }
                     }
-                    return null;
                 }
 
-                // Function to monitor mouse movement for distance popup
-                function setupMouseMoveMonitoring() {
-                    document.addEventListener('mousemove', function(e) {
-                        if (window._distanceToolActive) {
-                            var content = checkForDistancePopup();
-                            if (content) {
-                                window._lastDistancePopup = content;
-                            }
+                // Find the map instance
+                var mapElement = document.querySelector('.ol-viewport');
+                if (mapElement) {
+                    // Add click handler to detect single/double clicks
+                    mapElement.addEventListener('click', function(e) {
+                        var currentTime = new Date().getTime();
+                        var timeDiff = currentTime - window._lastClickTime;
+                        
+                        // Clear any existing timeout
+                        if (window._clickTimeout) {
+                            clearTimeout(window._clickTimeout);
                         }
+                        
+                        if (timeDiff < 300) { // Double click threshold
+                            console.log('Double click detected - ending measurement');
+                            // This is a double click - end measurement
+                            if (window._measurementStarted) {
+                                checkForStaticTooltip();
+                                window._measurementStarted = false;
+                            }
+                        } else {
+                            // This might be a single click - wait to see if it's part of a double click
+                            window._clickTimeout = setTimeout(function() {
+                                console.log('Single click processed - starting measurement');
+                                window._measurementStarted = true;
+                            }, 300);
+                        }
+                        
+                        window._lastClickTime = currentTime;
                     });
                 }
 
-                // Add click handler for distance measurement
-                if (typeof window._distanceClickHandler === 'undefined') {
-                    window._distanceClickHandler = function(event) {
-                        if (!window._distanceToolActive) return;
-                        
-                        var state = window._distanceMeasurementState;
-                        if (!state.started) {
-                            // First click - start measurement
-                            state.started = true;
-                            state.startPoint = event.coordinate;
-                            console.log('Distance measurement started at:', state.startPoint);
-                        } else {
-                            // Second click - capture the current distance
-                            var currentDistance = window._lastDistancePopup || checkForDistancePopup();
-                            if (currentDistance) {
-                                console.log('Captured distance on second click:', currentDistance);
-                                window.qt.distanceMeasured(currentDistance);
-                                
-                                // Reset measurement state
-                                state.started = false;
-                                state.startPoint = null;
-                            }
-                        }
-                    };
-
-                    // Find the map instance
-                    var mapElement = document.querySelector('.ol-viewport');
-                    if (mapElement) {
-                        for (var prop in mapElement) {
-                            if (prop.startsWith('__ol_')) {
-                                try {
-                                    var olProp = mapElement[prop];
-                                    if (olProp && olProp.map) {
-                                        olProp.map.on('click', window._distanceClickHandler);
-                                        console.log('Added distance click handler to map');
-                                        // Set up mouse move monitoring
-                                        setupMouseMoveMonitoring();
-                                    }
-                                } catch (e) {
-                                    console.error('Error setting up map handlers:', e);
-                                }
-                            }
-                        }
-                    }
+                // Set up polling interval for the static tooltip
+                if (!window._distanceMonitorInterval) {
+                    window._distanceMonitorInterval = setInterval(checkForStaticTooltip, 500);
+                    console.log('Distance monitor interval set up');
                 }
 
-                return "Distance measurement monitoring set up with cursor following";
+                return "Distance measurement monitoring set up with click handling";
             })();
             """
             
@@ -1118,11 +1292,11 @@ if WEB_ENGINE_AVAILABLE:
             debug_print(f"Map monitoring setup result: {result}", 0)  # Always show this
             if "successfully" in result:
                 self.statusBar().showMessage("Map interaction monitoring active", 3000)
-                self.info_label.setStyleSheet("background-color: rgba(200, 255, 200, 220); padding: 5px; border-radius: 3px;")
+                self.geo_info_label.setStyleSheet("background-color: rgba(200, 255, 200, 220); padding: 5px; border-radius: 3px;")
             else:
                 self.statusBar().showMessage(f"Map monitoring issue: {result}", 5000)
-                self.info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 5px; border-radius: 3px;")
-                self.info_label.setText(f"Warning: Map monitoring setup issue: {result}")
+                self.geo_info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 5px; border-radius: 3px;")
+                self.geo_info_label.setText(f"Warning: Map monitoring setup issue: {result}")
         
         def verify_monitoring(self):
             """Verify that monitoring is set up and working"""
@@ -1161,8 +1335,8 @@ if WEB_ENGINE_AVAILABLE:
                 # Update the info label with monitoring status
                 if all([status['monitorSetup'], status['intervalActive'], 
                        status['qtHandler'], status['popupHandler'], status['jsCallback']]):
-                    self.info_label.setText("Info tool active and monitoring ready - Click on the map to view information")
-                    self.info_label.setStyleSheet("background-color: rgba(200, 255, 200, 220); padding: 5px; border-radius: 3px;")
+                    self.geo_info_label.setText("Info tool active and monitoring ready - Click on the map to view information")
+                    self.geo_info_label.setStyleSheet("background-color: rgba(200, 255, 200, 220); padding: 5px; border-radius: 3px;")
                 else:
                     problems = []
                     if not status['monitorSetup']: problems.append("Monitor not set up")
@@ -1170,15 +1344,15 @@ if WEB_ENGINE_AVAILABLE:
                     if not status['popupHandler']: problems.append("Popup handler missing")
                     if not status['jsCallback']: problems.append("JS callback missing")
                     
-                    self.info_label.setText(f"Warning: Monitoring has issues: {', '.join(problems)}")
-                    self.info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 5px; border-radius: 3px;")
+                    self.geo_info_label.setText(f"Warning: Monitoring has issues: {', '.join(problems)}")
+                    self.geo_info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 5px; border-radius: 3px;")
                 
             except json.JSONDecodeError:
                 debug_print(f"Could not parse verification result: {result}", 0)
                 
         def handle_popup_info(self, content):
             """Handle the geological information from a map popup"""
-            debug_print(f"Popup information received: {content}", 0)  # Always show this
+            debug_print(f"Popup information received: {content}", 0)
             
             if content:
                 # Store the current content for adding to table
@@ -1188,33 +1362,84 @@ if WEB_ENGINE_AVAILABLE:
                 info_dict = self.parse_geological_info(content)
                 
                 if info_dict:
-                    # Format a compact display string
-                    compact_info = f"Symbol: {info_dict.get('symbol', 'N/A')} | Stratum: {info_dict.get('stratum', 'N/A')} | Rock: {info_dict.get('rock_type', 'N/A')} | Era: {info_dict.get('era', 'N/A')}"
+                    # Format a compact display string with only geological information
+                    compact_info = f"Symbol: {info_dict.get('symbol', 'N/A')} | Rock: {info_dict.get('rock_type', 'N/A')}"
                     
-                    # Display in the QLineEdit
-                    self.info_label.setText(compact_info)
-                    self.info_label.setStyleSheet("background-color: rgba(220, 255, 220, 240); padding: 2px; border-radius: 3px; border: 1px solid green;")
+                    # Update the geological info label
+                    self.geo_info_label.setText(compact_info)
+                    self.geo_info_label.setStyleSheet("background-color: rgba(220, 255, 220, 240); padding: 2px; border-radius: 3px;")
                 else:
-                    self.info_label.setText("Could not parse geological information")
-                    self.info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 2px; border-radius: 3px;")
+                    self.geo_info_label.setText("Could not parse geological information")
+                    self.geo_info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 2px; border-radius: 3px;")
                 
-                # Enable the add to table button
-                self.add_to_table_button.setEnabled(True)
+                # Enable the add to table button if distance measurement is also available
+                self.update_add_to_table_button_state()
                 
-                # Flash the label briefly to indicate new data
-                current_style = self.info_label.styleSheet()
-                self.info_label.setStyleSheet("background-color: rgba(100, 255, 100, 240); padding: 2px; border-radius: 3px; border: 2px solid green;")
-                QTimer.singleShot(300, lambda: self.info_label.setStyleSheet(current_style))
-                
-                # Log the content for debugging
-                debug_print(f"Content received: {content}", 0)
+                # Flash the label briefly
+                current_style = self.geo_info_label.styleSheet()
+                self.geo_info_label.setStyleSheet("background-color: rgba(200, 255, 200, 240); padding: 2px; border-radius: 3px;")
+                QTimer.singleShot(300, lambda: self.geo_info_label.setStyleSheet(current_style))
             else:
                 self.current_geo_info = None
-                self.add_to_table_button.setEnabled(False)
-                self.info_label.setText("No geological information found")
-                self.info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 2px; border-radius: 3px;")
+                self.update_add_to_table_button_state()
+                self.geo_info_label.setText("No geological information found")
+                self.geo_info_label.setStyleSheet("background-color: rgba(255, 240, 200, 220); padding: 2px; border-radius: 3px;")
                 self.statusBar().showMessage("No information found at clicked location", 3000)
-
+                
+        def handle_distance_measurement(self, distance_text):
+            """Handle a distance measurement"""
+            debug_print(f"Distance measurement received: {distance_text}", 0)
+            
+            # Extract distance and angle from the text
+            # Example format: "거리: 289.69 m | 각도: 256.7°" or similar
+            distance_match = re.search(r'(\d+\.?\d*)\s*m', distance_text)
+            angle_match = re.search(r'(\d+\.?\d*)\s*°', distance_text)
+            
+            if distance_match:
+                self.current_distance_measurement = distance_match.group(1)
+                debug_print(f"Extracted distance: {self.current_distance_measurement} m", 0)
+            
+            if angle_match:
+                self.current_angle_measurement = angle_match.group(1)
+                debug_print(f"Extracted angle: {self.current_angle_measurement}°", 0)
+                
+            # Update the measurement label
+            if hasattr(self, 'current_distance_measurement') and self.current_distance_measurement is not None:
+                measurement_text = f"Distance: {self.current_distance_measurement} m"
+                if hasattr(self, 'current_angle_measurement') and self.current_angle_measurement is not None:
+                    measurement_text += f" | Angle: {self.current_angle_measurement}°"
+                self.measurement_label.setText(measurement_text)
+                self.measurement_label.setStyleSheet("background-color: rgba(220, 220, 255, 240); padding: 2px; border-radius: 3px;")
+                
+                # Flash the label briefly
+                current_style = self.measurement_label.styleSheet()
+                self.measurement_label.setStyleSheet("background-color: rgba(200, 200, 255, 240); padding: 2px; border-radius: 3px;")
+                QTimer.singleShot(300, lambda: self.measurement_label.setStyleSheet(current_style))
+            
+            # Check if we should enable the add to table button
+            self.update_add_to_table_button_state()
+            
+            # If we have current geological info, redisplay it
+            if hasattr(self, 'current_geo_info') and self.current_geo_info:
+                self.handle_popup_info(self.current_geo_info)
+                
+        def update_add_to_table_button_state(self):
+            """Update the state of the Add to Table button based on available data"""
+            has_geo_info = hasattr(self, 'current_geo_info') and self.current_geo_info is not None
+            has_distance = hasattr(self, 'distance_measurement') and self.distance_measurement is not None
+            
+            debug_print(f"Updating Add to Table button state - Geo info: {has_geo_info}, Distance: {has_distance}", 0)
+            
+            # Enable the button if we have both geological info and distance measurement
+            self.add_to_table_button.setEnabled(has_geo_info and has_distance)
+            
+            if has_geo_info and has_distance:
+                self.add_to_table_button.setStyleSheet("background-color: rgba(200, 255, 200, 240);")
+                debug_print("Add to Table button enabled", 0)
+            else:
+                self.add_to_table_button.setStyleSheet("")
+                debug_print("Add to Table button disabled", 0)
+        
         def update_coordinates(self, lat, lng):
             """Update the coordinate display with WGS84 coordinates"""
             debug_print(f"Updating coordinates display: {lat}, {lng}", 0)
@@ -1240,9 +1465,28 @@ if WEB_ENGINE_AVAILABLE:
             info_dict = self.parse_geological_info(self.current_geo_info)
             
             if info_dict:
+                # First, ensure we have enough columns
+                if self.geo_table.columnCount() < 16:  # We need 16 columns for all the data
+                    self.geo_table.setColumnCount(16)
+                    headers = ["기호 (Symbol)", "지층 (Stratum)", 
+                               "대표암상 (Rock Type)", "시대 (Era)", 
+                               "도폭 (Map Sheet)", "주소 (Address)",
+                               "거리 (Distance)", "각도 (Angle)",
+                               "X 좌표 1", "Y 좌표 1", "위도 (Latitude) 1", "경도 (Longitude) 1",
+                               "X 좌표 2", "Y 좌표 2", "위도 (Latitude) 2", "경도 (Longitude) 2"]
+                    self.geo_table.setHorizontalHeaderLabels(headers)
+                
                 # Add a new row to the table
                 row_position = self.geo_table.rowCount()
                 self.geo_table.insertRow(row_position)
+                
+                # Debug print current values
+                debug_print(f"Adding to table - Row position: {row_position}", 0)
+                debug_print(f"Symbol: {info_dict.get('symbol', '')}", 0)
+                debug_print(f"Distance: {self.current_distance_measurement}", 0)
+                debug_print(f"Angle: {self.current_angle_measurement}", 0)
+                debug_print(f"Previous coords: {self.previous_raw_x}, {self.previous_raw_y}, {self.previous_lat}, {self.previous_lng}", 0)
+                debug_print(f"Current coords: {self.current_raw_x}, {self.current_raw_y}, {self.current_lat}, {self.current_lng}", 0)
                 
                 # Add the extracted information to the cells
                 self.geo_table.setItem(row_position, 0, QTableWidgetItem(info_dict.get('symbol', '')))
@@ -1252,187 +1496,178 @@ if WEB_ENGINE_AVAILABLE:
                 self.geo_table.setItem(row_position, 4, QTableWidgetItem(info_dict.get('map_sheet', '')))
                 self.geo_table.setItem(row_position, 5, QTableWidgetItem(info_dict.get('address', '')))
                 
+                # Extract numeric values for database storage
+                distance_value = None
+                angle_value = None
+                
                 # Add distance and angle if available
-                if hasattr(self, 'current_distance_measurement'):
+                if hasattr(self, 'current_distance_measurement') and self.current_distance_measurement is not None:
                     debug_print(f"Processing distance measurement: {self.current_distance_measurement}", 0)
-                    # Extract distance value and unit (now looking for numbers before 'm')
-                    #distance_match = re.search(r'(\d+\.?\d*)\s*m(?:\s|$|\|)', self.last_distance_measurement)
-                    
-                    #if distance_match:
-                    #    distance_value = distance_match.group(1)
                     self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{self.current_distance_measurement} m"))
                     debug_print(f"Added distance to table: {self.current_distance_measurement} m", 0)
                     
-                    self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{self.current_angle_measurement}°"))
-                    debug_print(f"Added angle to table: {self.current_angle_measurement}°", 0)
+                    # Convert to float for database
+                    try:
+                        distance_value = float(self.current_distance_measurement)
+                    except (ValueError, TypeError):
+                        distance_value = None
                     
-                else:
-                    debug_print("No last_distance_measurement available", 0)
-                
-                # Determine how many columns are needed for coordinates
-                needed_columns = 8  # Basic info columns + distance + angle
-                
-                # Check if we have raw map coordinates or WGS84 coordinates
-                has_raw_coords = hasattr(self, 'current_raw_x') and hasattr(self, 'current_raw_y')
-                has_wgs84_coords = hasattr(self, 'current_lat') and hasattr(self, 'current_lng')
-                
-                if has_raw_coords or has_wgs84_coords:
-                    if has_raw_coords and has_wgs84_coords:
-                        needed_columns = 12  # Both coordinate types (8 basic + 2 raw + 2 WGS84)
-                    else:
-                        needed_columns = 10  # Only one coordinate type (8 basic + 2 coords)
-                    
-                    # Expand the table if needed
-                    if self.geo_table.columnCount() < needed_columns:
-                        self.geo_table.setColumnCount(needed_columns)
-                        headers = []
-                        for i in range(8):  # First 8 columns (including distance and angle)
-                            headers.append(self.geo_table.horizontalHeaderItem(i).text())
+                    if hasattr(self, 'current_angle_measurement') and self.current_angle_measurement is not None:
+                        self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{self.current_angle_measurement}°"))
+                        debug_print(f"Added angle to table: {self.current_angle_measurement}°", 0)
                         
-                        if has_raw_coords and has_wgs84_coords:
-                            # Add headers for both coordinate types
-                            headers.extend(["X 좌표", "Y 좌표", "위도 (Latitude)", "경도 (Longitude)"])
-                        elif has_raw_coords:
-                            # Add headers for raw coordinates only
-                            headers.extend(["X 좌표", "Y 좌표"])
-                        else:
-                            # Add headers for WGS84 coordinates only
-                            headers.extend(["위도 (Latitude)", "경도 (Longitude)"])
-                            
-                        self.geo_table.setHorizontalHeaderLabels(headers)
+                        # Convert to float for database
+                        try:
+                            angle_value = float(self.current_angle_measurement)
+                        except (ValueError, TypeError):
+                            angle_value = None
+                else:
+                    debug_print("No distance measurement available", 0)
                 
-                # Add raw map coordinates if available
-                if has_raw_coords:
-                    col_offset = 8  # Start after the basic info columns + distance + angle
-                    self.geo_table.setItem(row_position, col_offset, QTableWidgetItem(str(self.current_raw_x)))
-                    self.geo_table.setItem(row_position, col_offset + 1, QTableWidgetItem(str(self.current_raw_y)))
-                    
-                    # Add projection info to a tooltip
-                    if hasattr(self, 'current_projection'):
-                        projection_info = f"Projection: {self.current_projection}"
-                        x_item = self.geo_table.item(row_position, col_offset)
-                        y_item = self.geo_table.item(row_position, col_offset + 1)
-                        if x_item and y_item:
-                            x_item.setToolTip(projection_info)
-                            y_item.setToolTip(projection_info)
+                # Add previous coordinates (X1, Y1, Lat1, Lng1) - starting at column 8
+                prev_x, prev_y, prev_lat, prev_lng = None, None, None, None
                 
-                # Add WGS84 coordinates if available
-                if has_wgs84_coords:
-                    # Determine where to place the WGS84 coordinates
-                    if has_raw_coords:
-                        col_offset = 10  # After raw coordinates
-                    else:
-                        col_offset = 8  # After basic info columns + distance + angle
-                    
-                    self.geo_table.setItem(row_position, col_offset, QTableWidgetItem(str(self.current_lat)))
-                    self.geo_table.setItem(row_position, col_offset + 1, QTableWidgetItem(str(self.current_lng)))
+                if hasattr(self, 'previous_raw_x') and self.previous_raw_x is not None:
+                    self.geo_table.setItem(row_position, 8, QTableWidgetItem(str(self.previous_raw_x)))
+                    debug_print(f"Added previous X: {self.previous_raw_x}", 0)
+                    prev_x = float(self.previous_raw_x)
+                
+                if hasattr(self, 'previous_raw_y') and self.previous_raw_y is not None:
+                    self.geo_table.setItem(row_position, 9, QTableWidgetItem(str(self.previous_raw_y)))
+                    debug_print(f"Added previous Y: {self.previous_raw_y}", 0)
+                    prev_y = float(self.previous_raw_y)
+                
+                if hasattr(self, 'previous_lat') and self.previous_lat is not None:
+                    self.geo_table.setItem(row_position, 10, QTableWidgetItem(str(self.previous_lat)))
+                    debug_print(f"Added previous Lat: {self.previous_lat}", 0)
+                    prev_lat = float(self.previous_lat)
+                
+                if hasattr(self, 'previous_lng') and self.previous_lng is not None:
+                    self.geo_table.setItem(row_position, 11, QTableWidgetItem(str(self.previous_lng)))
+                    debug_print(f"Added previous Lng: {self.previous_lng}", 0)
+                    prev_lng = float(self.previous_lng)
+                
+                # Add current coordinates (X2, Y2, Lat2, Lng2) - starting at column 12
+                curr_x, curr_y, curr_lat, curr_lng = None, None, None, None
+                
+                if hasattr(self, 'current_raw_x') and self.current_raw_x is not None:
+                    self.geo_table.setItem(row_position, 12, QTableWidgetItem(str(self.current_raw_x)))
+                    debug_print(f"Added current X: {self.current_raw_x}", 0)
+                    curr_x = float(self.current_raw_x)
+                
+                if hasattr(self, 'current_raw_y') and self.current_raw_y is not None:
+                    self.geo_table.setItem(row_position, 13, QTableWidgetItem(str(self.current_raw_y)))
+                    debug_print(f"Added current Y: {self.current_raw_y}", 0)
+                    curr_y = float(self.current_raw_y)
+                
+                if hasattr(self, 'current_lat') and self.current_lat is not None:
+                    self.geo_table.setItem(row_position, 14, QTableWidgetItem(str(self.current_lat)))
+                    debug_print(f"Added current Lat: {self.current_lat}", 0)
+                    curr_lat = float(self.current_lat)
+                
+                if hasattr(self, 'current_lng') and self.current_lng is not None:
+                    self.geo_table.setItem(row_position, 15, QTableWidgetItem(str(self.current_lng)))
+                    debug_print(f"Added current Lng: {self.current_lng}", 0)
+                    curr_lng = float(self.current_lng)
+                
+                # Save to database
+                try:
+                    db.connect()
+                    record = GeologicalRecord.create(
+                        symbol=info_dict.get('symbol', ''),
+                        stratum=info_dict.get('stratum', ''),
+                        rock_type=info_dict.get('rock_type', ''),
+                        era=info_dict.get('era', ''),
+                        map_sheet=info_dict.get('map_sheet', ''),
+                        address=info_dict.get('address', ''),
+                        distance=distance_value,
+                        angle=angle_value,
+                        x_coord_1=prev_x,
+                        y_coord_1=prev_y,
+                        lat_1=prev_lat,
+                        lng_1=prev_lng,
+                        x_coord_2=curr_x,
+                        y_coord_2=curr_y,
+                        lat_2=curr_lat,
+                        lng_2=curr_lng
+                    )
+                    debug_print(f"Saved record to database with ID: {record.id}", 0)
+                except Exception as e:
+                    debug_print(f"Error saving to database: {str(e)}", 0)
+                    QMessageBox.warning(self, "Database Error", f"Error saving to database: {str(e)}")
+                finally:
+                    if not db.is_closed():
+                        db.close()
                 
                 # Select the new row
                 self.geo_table.selectRow(row_position)
+                debug_print(f"Selected row {row_position}", 0)
                 
                 # Show confirmation
                 self.statusBar().showMessage(f"Added geological information to row {row_position + 1}", 3000)
+                
+                # Reset tool states
+                if self.info_button.isChecked():
+                    self.info_button.setChecked(False)
+                    self.info_tool_active = False
+                    self.geo_info_label.setText("")
+                    self.geo_info_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 2px; border-radius: 3px;")
+                
+                if self.distance_button.isChecked():
+                    self.distance_button.setChecked(False)
+                    self.distance_tool_active = False
+                    self.measurement_label.setText("")
+                    self.measurement_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 2px; border-radius: 3px;")
+                    
+                    # Deactivate the map's distance measurement button
+                    self.web_view.page().runJavaScript(
+                        """
+                        (function() {
+                            var distanceButton = document.querySelector('a.btn_distance, a.btn_distance.active');
+                            if (distanceButton) {
+                                distanceButton.classList.remove('active');
+                                console.log('Deactivated map distance button');
+                            }
+                        })();
+                        """,
+                        lambda result: debug_print("Map distance button deactivated", 0)
+                    )
+                
+                # Reset current info and measurements
+                self.current_geo_info = None
+                self.current_distance_measurement = None
+                self.current_angle_measurement = None
+                self.add_to_table_button.setEnabled(False)
+                
             else:
                 QMessageBox.warning(self, "Parsing Error", "Could not parse the geological information")
         
-        def parse_geological_info(self, content):
-            """Parse the geological information text to extract structured data"""
-            # Initialize the dictionary to store the extracted information
-            info_dict = {
-                'symbol': '',
-                'stratum': '',
-                'rock_type': '',
-                'era': '',
-                'map_sheet': '',
-                'address': ''
-            }
-            
-            # Split the content into lines
-            lines = content.strip().split('\n')
-            
-            # Extract information using pattern matching
-            for line in lines:
-                line = line.strip()
-                
-                # Symbol (기호)
-                if '기호' in line or 'symbol' in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        info_dict['symbol'] = parts[1].strip()
-                
-                # Stratum (지층)
-                elif '지층' in line or 'stratum' in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        info_dict['stratum'] = parts[1].strip()
-                
-                # Rock Type (대표암상)
-                elif '대표암상' in line or 'rock' in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        info_dict['rock_type'] = parts[1].strip()
-                
-                # Era (시대)
-                elif '시대' in line or 'era' in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        info_dict['era'] = parts[1].strip()
-                
-                # Map Sheet (도폭)
-                elif '도폭' in line or 'map sheet' in line.lower():
-                    parts = line.split(':', 1)
-                    if len(parts) > 1:
-                        info_dict['map_sheet'] = parts[1].strip()
-                
-                # Address (주소)
-                elif '주소' in line or 'address' in line.lower():
-                    # Special handling for address which might be on a separate line
-                    parts = line.split(':', 1)
-                    if len(parts) > 1 and parts[1].strip():
-                        info_dict['address'] = parts[1].strip()
-                    elif len(lines) > lines.index(line) + 1 and not ':' in lines[lines.index(line) + 1]:
-                        # If the next line doesn't have a colon, it might be the address
-                        next_line = lines[lines.index(line) + 1].strip()
-                        if next_line and not next_line.startswith('인쇄') and not next_line.startswith('오류'):
-                            info_dict['address'] = next_line
-            
-            # If minimal extraction was successful
-            if info_dict['symbol'] or info_dict['stratum']:
-                return info_dict
-            else:
-                # Try a fallback method - look for Korean characters followed by ":"
-                korean_regex = re.compile(r'([가-힣]+)\s*:\s*([^\n]+)')
-                matches = korean_regex.findall(content)
-                
-                for match in matches:
-                    key, value = match
-                    if '기호' in key:
-                        info_dict['symbol'] = value.strip()
-                    elif '지층' in key:
-                        info_dict['stratum'] = value.strip()
-                    elif '대표암상' in key:
-                        info_dict['rock_type'] = value.strip()
-                    elif '시대' in key:
-                        info_dict['era'] = value.strip()
-                    elif '도폭' in key:
-                        info_dict['map_sheet'] = value.strip()
-                    elif '주소' in key:
-                        info_dict['address'] = value.strip()
-                
-                return info_dict
-        
         def clear_geo_table(self):
-            """Clear all rows from the geological data table"""
+            """Clear all rows from the geological data table and the database"""
             if self.geo_table.rowCount() > 0:
                 reply = QMessageBox.question(
                     self, 'Confirm Clear', 
-                    'Are you sure you want to clear all geological data?',
+                    'Are you sure you want to clear all geological data? This will delete all records from the database.',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No
                 )
                 
                 if reply == QMessageBox.Yes:
+                    # Clear the table
                     self.geo_table.setRowCount(0)
-                    self.statusBar().showMessage("Table cleared", 3000)
+                    
+                    # Clear the database
+                    try:
+                        db.connect()
+                        GeologicalRecord.delete().execute()
+                        debug_print("All records deleted from database", 0)
+                    except Exception as e:
+                        debug_print(f"Error clearing database: {str(e)}", 0)
+                        QMessageBox.warning(self, "Database Error", f"Error clearing database: {str(e)}")
+                    finally:
+                        if not db.is_closed():
+                            db.close()
+                    
+                    self.statusBar().showMessage("Table and database cleared", 3000)
             else:
                 self.statusBar().showMessage("Table is already empty", 3000)
         
@@ -1513,94 +1748,121 @@ if WEB_ENGINE_AVAILABLE:
                 """,
                 self.handle_coordinate_polling
             )
-        
+
+
+        def calculate_wgs84_distance(self, lat1, lon1, lat2, lon2):
+            """
+            Calculate geodesic (real surface) distance between two points in WGS84.
+            
+            Parameters:
+                lat1, lon1: Latitude and longitude of point A
+                lat2, lon2: Latitude and longitude of point B
+                
+            Returns:
+                Distance in meters (float)
+            """
+
+            if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
+                return 0, 0
+
+            point_a = (lat1, lon1)
+            point_b = (lat2, lon2)
+
+            distance = geodesic(point_a, point_b).meters
+            # calculate angle
+            angle = math.atan2(lat1 - lat2, lon1 - lon2)
+            angle = math.degrees(angle)
+            angle = 90 - angle
+            if angle < 0:
+                angle += 360
+
+            return distance, angle
+
         def handle_coordinate_polling(self, result):
-            """Process coordinates retrieved from polling"""
-            if not result:
+            """Handle the results of coordinate polling"""
+            if not result or isinstance(result, bool):
                 return
-                
+            
             try:
-                coord_info = json.loads(result)
-                debug_print(f"Received coordinate data: {coord_info}", 1)
+                # Decode the result from JSON
+                data = json.loads(result)
+                debug_print(f"Received coordinate polling result: {data}", 2)
                 
-                # Store raw coordinates and additional information
-                self.last_coord_info = coord_info
-                
-                # Extract raw map coordinates if available
-                raw_coords = coord_info.get('raw')
-                
-                if raw_coords and isinstance(raw_coords, list) and len(raw_coords) >= 2:
-                    # Use raw coordinates in native map projection
-                    x_coord = raw_coords[0] 
-                    y_coord = raw_coords[1]
-                    projection = coord_info.get('projection', 'Unknown')
+                # If we have raw coordinates, update the raw coordinate display
+                if 'raw_x' in data and 'raw_y' in data:
+                    self.update_raw_coordinates(data['raw_x'], data['raw_y'], data.get('projection', ''))
                     
-                    debug_print(f"Raw map coordinates: X={x_coord}, Y={y_coord} ({projection})", 0)
-                    
-                    # Calculate distance and angle if we have previous coordinates
+                    # Store the coordinates for use in distance measurements
                     if hasattr(self, 'current_raw_x') and hasattr(self, 'current_raw_y'):
-                        # Calculate distance using the Pythagorean theorem
-                        dx = x_coord - self.current_raw_x
-                        dy = y_coord - self.current_raw_y
-                        distance = (dx**2 + dy**2)**0.5
-                        
-                        # Calculate angle in degrees (0° is east, positive is counterclockwise)
-                        angle = math.degrees(math.atan2(dy, dx))
-                        if angle < 0:
-                            angle += 360
-                        
-                        # Store the calculated values with consistent formatting
-                        distance_str = f"{distance:.2f}"
-                        angle_str = f"{angle:.1f}"
-                        self.current_distance_measurement = distance_str
-                        self.current_angle_measurement = angle_str
-                        self.last_distance_measurement = f"{distance_str} m | {angle_str}°"
-                        debug_print(f"Stored raw coordinates measurement: distance={distance_str}m, angle={angle_str}°", 0)
-                    
-                    self.update_raw_coordinates(x_coord, y_coord, projection, coord_info)
-                    
-                # If lat/lng is available (converted to WGS84), also update those
-                lat = coord_info.get('lat')
-                lng = coord_info.get('lng')
+                        if not hasattr(self, 'previous_raw_x') or not hasattr(self, 'previous_raw_y'):
+                            # First point in measurement
+                            self.previous_raw_x = self.current_raw_x
+                            self.previous_raw_y = self.current_raw_y
+                            self.previous_lat = self.current_lat if hasattr(self, 'current_lat') else None
+                            self.previous_lng = self.current_lng if hasattr(self, 'current_lng') else None
+                        else:
+                            # Calculate distance if we have WGS84 coordinates for both points
+                            if (hasattr(self, 'previous_lat') and hasattr(self, 'previous_lng') and 
+                                hasattr(self, 'current_lat') and hasattr(self, 'current_lng')):
+                                
+                                # Only calculate if all coordinates are valid
+                                if (self.previous_lat is not None and self.previous_lng is not None and 
+                                    self.current_lat is not None and self.current_lng is not None):
+                                    
+                                    # Calculate the distance
+                                    self.wgs_distance = self.calculate_wgs84_distance(
+                                        self.previous_lat, self.previous_lng,
+                                        self.current_lat, self.current_lng
+                                    )
+                                    
+                                    debug_print(f"Calculated WGS84 distance: {self.wgs_distance} meters", 0)
+                                    
+                                    # If we're in distance measuring mode, update the display
+                                    if hasattr(self, 'distance_tool_active') and self.distance_tool_active:
+                                        # Calculate angle between points
+                                        dx = self.current_raw_x - self.previous_raw_x
+                                        dy = self.current_raw_y - self.previous_raw_y
+                                        angle = math.degrees(math.atan2(dy, dx))
+                                        # Ensure angle is in 0-360 range
+                                        angle = (angle + 360) % 360
+                                        
+                                        self.current_angle_measurement = f"{angle:.1f}"
+                                        self.current_distance_measurement = f"{self.wgs_distance:.1f}"
+                                        
+                                        debug_print(f"Distance measurement: {self.current_distance_measurement} m at {self.current_angle_measurement}°", 0)
+                                        
+                                        # Update measurement display
+                                        measurement_text = f"Distance: {self.current_distance_measurement} m | Angle: {self.current_angle_measurement}°"
+                                        self.measurement_label.setText(measurement_text)
+                                        self.measurement_label.setStyleSheet("background-color: rgba(220, 220, 255, 240); padding: 2px; border-radius: 3px;")
+                                        
+                                        # Flash the label
+                                        current_style = self.measurement_label.styleSheet()
+                                        self.measurement_label.setStyleSheet("background-color: rgba(200, 200, 255, 240); padding: 2px; border-radius: 3px;")
+                                        QTimer.singleShot(300, lambda: self.measurement_label.setStyleSheet(current_style))
+                                        
                 
-                if lat is not None and lng is not None:
-                    # Calculate distance and angle using WGS84 coordinates if we have previous coordinates
-                    if hasattr(self, 'current_lat') and hasattr(self, 'current_lng'):
-                        # Calculate distance using the Haversine formula
-                        R = 6371000  # Earth's radius in meters
-                        lat1, lon1 = math.radians(self.current_lat), math.radians(self.current_lng)
-                        lat2, lon2 = math.radians(lat), math.radians(lng)
-                        
-                        dlat = lat2 - lat1
-                        dlon = lon2 - lon1
-                        
-                        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-                        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-                        
-                        distance = R * c  # Distance in meters
-                        
-                        # Calculate angle in degrees (0° is north, positive is clockwise)
-                        y = math.sin(dlon) * math.cos(lat2)
-                        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-                        angle = math.degrees(math.atan2(y, x))
-                        if angle < 0:
-                            angle += 360
-                        
-                        # Store the calculated values with consistent formatting
-                        distance_str = f"{distance:.1f}"
-                        angle_str = f"{angle:.1f}"
-                        self.last_distance_measurement = f"{distance_str} m | {angle_str}°"
-                        debug_print(f"Stored WGS84 measurement: distance={distance_str}m, angle={angle_str}°", 0)
-                    
-                    self.update_coordinates(lat, lng)
+                # If we have WGS84 coordinates, update the coordinate display
+                if 'lat' in data and 'lng' in data:
+                    self.update_coordinates(data['lat'], data['lng'])
                 
-                # Clear the coordinates in JavaScript
-                self.web_view.page().runJavaScript(
-                    "window._lastClickCoordinates = null;",
-                    lambda result: None
-                )
-            except json.JSONDecodeError as e:
-                debug_print(f"Error decoding coordinates: {e}", 0)
+                # Check for info popup content
+                if 'popup_content' in data and data['popup_content']:
+                    popup_content = data['popup_content']
+                    self.handle_popup_info(popup_content)
+                
+                # Check for distance measurement
+                if 'distance_measurement' in data and data['distance_measurement']:
+                    distance_text = data['distance_measurement']
+                    self.handle_distance_measurement(distance_text)
+
+                # Update the button state after processing distance
+                self.update_add_to_table_button_state()
+                
+            except Exception as e:
+                debug_print(f"Error processing polling result: {str(e)}", 0)
+                import traceback
+                debug_print(traceback.format_exc(), 0)
         
         def update_raw_coordinates(self, x, y, projection, coord_info=None):
             """Update and store the raw map coordinates in their native format"""
@@ -1612,80 +1874,55 @@ if WEB_ENGINE_AVAILABLE:
             self.current_projection = projection
             
             # Build the coordinate display string
-            coord_display = f"Map: X {x:.2f}, Y {y:.2f} ({projection})"
+            coord_display = f"Map: X {x:.1f}, Y {y:.1f}"
             
             # Add WGS84 coordinates if available
             if coord_info and 'lat' in coord_info and 'lng' in coord_info:
                 lat = coord_info['lat']
                 lng = coord_info['lng']
+                #distance = self.calculate_wgs84_distance(self.current_lat, self.current_lng, lat, lng)
+                #self.statusBar().showMessage(f"WGS84 distance: {distance:.2f} m", 3000)
+                #debug_print(f"WGS84 distance in update_raw_coordinates: {self.current_lat}, {self.current_lng} to {lat}, {lng} = {distance:.2f} m", 0)
+                self.previous_lat = self.current_lat
+                self.previous_lng = self.current_lng
                 self.current_lat = lat
                 self.current_lng = lng
-                coord_display += f" | WGS84: Lat {lat:.6f}, Lng {lng:.6f}"
+                coord_display += f" | WGS84: {lat:.4f}, {lng:.4f}"
             
-            # Add distance and angle if available
-            if hasattr(self, 'last_distance_measurement'):
-                debug_print(f"Processing last_distance_measurement: {self.last_distance_measurement}", 0)
-                # Extract distance value and unit
-                distance_match = re.search(r'(\d+\.?\d*)\s*(m|km)', self.last_distance_measurement)
-                if distance_match:
-                    distance_value = distance_match.group(1)
-                    distance_unit = distance_match.group(2)
-                    coord_display += f" | Distance: {distance_value} {distance_unit}"
-                    debug_print(f"Added distance to display: {distance_value} {distance_unit}", 0)
-                else:
-                    debug_print("No distance match found in last_distance_measurement", 0)
-                
-                # Extract angle if available
-                angle_match = re.search(r'(\d+\.?\d*)\s*°', self.last_distance_measurement)
-                if angle_match:
-                    angle_value = angle_match.group(1)
-                    coord_display += f" | Angle: {angle_value}°"
-                    debug_print(f"Added angle to display: {angle_value}°", 0)
-                else:
-                    debug_print("No angle match found in last_distance_measurement", 0)
-            else:
-                debug_print("No last_distance_measurement available", 0)
+            # Add distance if available (simplified display)
+            if hasattr(self, 'current_distance_measurement'):
+                coord_display += f" | Dist: {self.current_distance_measurement}m"
             
-            # Update the coordinate display
+            # Add angle if available (simplified display)
+            if hasattr(self, 'current_angle_measurement'):
+                coord_display += f" | {self.current_angle_measurement}°"
+            
+            # Update the coordinate display with elided text if necessary
             self.coords_label.setText(coord_display)
-            debug_print(f"Updated coordinate display: {coord_display}", 0)
             
-            # Update the info label if we have geological information
-            if self.current_geo_info:
-                # Parse the geological information
-                info_dict = self.parse_geological_info(self.current_geo_info)
-                if info_dict:
-                    # Format a compact display string with geological info
-                    compact_info = f"Symbol: {info_dict.get('symbol', 'N/A')} | Stratum: {info_dict.get('stratum', 'N/A')}"
-                    
-                    # Add distance and angle to the info display if available
-                    if hasattr(self, 'last_distance_measurement'):
-                        if distance_match:
-                            compact_info += f" | Distance: {distance_value} {distance_unit}"
-                            debug_print(f"Added distance to info display: {distance_value} {distance_unit}", 0)
-                        if angle_match:
-                            compact_info += f" | Angle: {angle_value}°"
-                            debug_print(f"Added angle to info display: {angle_value}°", 0)
-                    
-                    self.info_label.setText(compact_info)
-                    self.info_label.setStyleSheet("background-color: rgba(220, 255, 220, 240); padding: 2px; border-radius: 3px; border: 1px solid green;")
-                    debug_print(f"Updated info display: {compact_info}", 0)
-            
-            # Flash the coordinate label to indicate new data
+            # Flash the coordinate label briefly
             current_style = self.coords_label.styleSheet()
-            self.coords_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 5px; border-radius: 3px; border: 1px solid blue;")
+            self.coords_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 2px; border-radius: 3px;")
             QTimer.singleShot(300, lambda: self.coords_label.setStyleSheet(current_style))
             
-            self.statusBar().showMessage(f"Coordinates and measurements updated", 2000)
+            self.statusBar().showMessage("Coordinates updated", 2000)
+            #self.handle_popup_info()
         
         def update_coordinates(self, lat, lng):
             """Update the displayed WGS84 coordinates and store them"""
             debug_print(f"WGS84 coordinates: Lat={lat}, Lng={lng}", 0)
-            
+
             # Round to 6 decimal places (approx. 10cm precision)
             lat_formatted = round(float(lat), 6)
             lng_formatted = round(float(lng), 6)
-            
+
+            if hasattr(self, 'current_lat') and hasattr(self, 'current_lng'):
+                self.wgs_distance, self.wgs_angle = self.calculate_wgs84_distance(self.current_lat, self.current_lng, self.previous_lat, self.previous_lng)
+                self.statusBar().showMessage(f"WGS84 distance: {self.wgs_distance:.2f} m", 3000)
+                debug_print(f"WGS84 distance: {self.current_lat}, {self.current_lng} to {self.previous_lat}, {self.previous_lng} = {self.wgs_distance:.2f} m", 0)
+                self.current_distance_measurement = self.wgs_distance
+                self.current_angle_measurement = self.wgs_angle
+
             # Store the coordinates
             self.current_lat = lat_formatted
             self.current_lng = lng_formatted
@@ -1836,25 +2073,533 @@ if WEB_ENGINE_AVAILABLE:
             if angle_match:
                 self.current_angle_measurement = angle_match.group(1)
                 debug_print(f"Extracted angle: {self.current_angle_measurement}°", 0)
+                
+            # Update the measurement label
+            if hasattr(self, 'current_distance_measurement') and self.current_distance_measurement is not None:
+                measurement_text = f"Distance: {self.current_distance_measurement} m"
+                if hasattr(self, 'current_angle_measurement') and self.current_angle_measurement is not None:
+                    measurement_text += f" | Angle: {self.current_angle_measurement}°"
+                self.measurement_label.setText(measurement_text)
+                self.measurement_label.setStyleSheet("background-color: rgba(220, 220, 255, 240); padding: 2px; border-radius: 3px;")
+                
+                # Flash the label briefly
+                current_style = self.measurement_label.styleSheet()
+                self.measurement_label.setStyleSheet("background-color: rgba(200, 200, 255, 240); padding: 2px; border-radius: 3px;")
+                QTimer.singleShot(300, lambda: self.measurement_label.setStyleSheet(current_style))
             
-            # Update the info label with the measurement
-            measurement_display = f"Distance: {self.current_distance_measurement} m"
-            if hasattr(self, 'current_angle_measurement'):
-                measurement_display += f" | Angle: {self.current_angle_measurement}°"
+            # Check if we should enable the add to table button
+            self.update_add_to_table_button_state()
             
-            self.info_label.setText(measurement_display)
-            self.info_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 5px; border-radius: 3px; border: 1px solid blue;")
+            # If we have current geological info, redisplay it
+            if hasattr(self, 'current_geo_info') and self.current_geo_info:
+                self.handle_popup_info(self.current_geo_info)
+                
+        def update_add_to_table_button_state(self):
+            """Update the state of the Add to Table button based on available data"""
+            has_geo_info = hasattr(self, 'current_geo_info') and self.current_geo_info is not None
+            has_distance = hasattr(self, 'current_distance_measurement') and self.current_distance_measurement is not None
             
-            # Flash the label to indicate new measurement
-            current_style = self.info_label.styleSheet()
-            self.info_label.setStyleSheet("background-color: rgba(120, 180, 255, 240); padding: 5px; border-radius: 3px; border: 2px solid blue;")
-            QTimer.singleShot(300, lambda: self.info_label.setStyleSheet(current_style))
+            debug_print(f"Updating Add to Table button state - Geo info: {has_geo_info}, Distance: {has_distance}", 0)
             
-            # Show the measurement in the status bar
-            self.statusBar().showMessage(f"Distance captured: {measurement_display}", 5000)
+            # Enable the button if we have both geological info and distance measurement
+            self.add_to_table_button.setEnabled(has_geo_info and has_distance)
             
-            # Store the last measurement
-            self.last_distance_measurement = distance_text
+            if has_geo_info and has_distance:
+                self.add_to_table_button.setStyleSheet("background-color: rgba(200, 255, 200, 240);")
+                debug_print("Add to Table button enabled", 0)
+            else:
+                self.add_to_table_button.setStyleSheet("")
+                debug_print("Add to Table button disabled", 0)
+        
+        def pan_map(self, direction):
+            """Pan the map in the specified direction
+            
+            Args:
+                direction (str): The direction to pan the map - 'north', 'south', 'east', or 'west'
+            """
+            debug_print(f"Panning map {direction}", 0)
+            
+            # Calculate pan distance based on current view
+            script = f"""
+            (function() {{
+                try {{
+                    // First, try to find the map object
+                    var map = null;
+                    
+                    // Check for global map variable
+                    if (window.map && typeof window.map.getView === 'function') {{
+                        map = window.map;
+                    }} else {{
+                        // Look for map in global variables
+                        for (var key in window) {{
+                            try {{
+                                if (typeof window[key] === 'object' && window[key] !== null) {{
+                                    var obj = window[key];
+                                    if (typeof obj.getView === 'function' && 
+                                        typeof obj.getTargetElement === 'function') {{
+                                        map = obj;
+                                        break;
+                                    }}
+                                }}
+                            }} catch (e) {{}}
+                        }}
+                    }}
+                    
+                    if (!map) {{
+                        return "Map object not found";
+                    }}
+                    
+                    // Get the current view
+                    var view = map.getView();
+                    if (!view) {{
+                        return "Map view not found";
+                    }}
+                    
+                    // Get the current center
+                    var center = view.getCenter();
+                    if (!center) {{
+                        return "Map center not found";
+                    }}
+                    
+                    // Get the current resolution (used to calculate pan distance)
+                    var resolution = view.getResolution();
+                    if (!resolution) {{
+                        resolution = 100; // Default value if resolution can't be determined
+                    }}
+                    
+                    // Calculate pan distance (about 20% of the viewport)
+                    var mapSize = map.getSize();
+                    var panDistance = resolution * (mapSize ? Math.min(mapSize[0], mapSize[1]) * 0.2 : 200);
+                    
+                    // Create new center based on direction
+                    var newCenter = center.slice();
+                    switch ("{direction}") {{
+                        case "north":
+                            newCenter[1] += panDistance;
+                            break;
+                        case "south":
+                            newCenter[1] -= panDistance;
+                            break;
+                        case "east":
+                            newCenter[0] += panDistance;
+                            break;
+                        case "west":
+                            newCenter[0] -= panDistance;
+                            break;
+                    }}
+                    
+                    // Pan to the new center
+                    view.setCenter(newCenter);
+                    
+                    return "Map panned {direction} successfully";
+                }} catch (e) {{
+                    console.error("Error panning map:", e);
+                    return "Error panning map: " + e.message;
+                }}
+            }})();
+            """
+            
+            self.web_view.page().runJavaScript(script, lambda result: self.handle_pan_result(result, direction))
+        
+        def handle_pan_result(self, result, direction):
+            """Handle the result of panning the map"""
+            debug_print(f"Pan result: {result}", 0)
+            
+            if "successfully" in result:
+                self.statusBar().showMessage(f"Map panned {direction}", 2000)
+            else:
+                self.statusBar().showMessage(f"Error panning map: {result}", 3000)
+                
+                # If we couldn't find the map, try a fallback approach
+                if "not found" in result:
+                    fallback_script = f"""
+                    (function() {{
+                        try {{
+                            // Fallback approach - find the OpenLayers viewport and simulate pan via drag event
+                            var viewport = document.querySelector('.ol-viewport');
+                            if (!viewport) {{
+                                return "Viewport not found";
+                            }}
+                            
+                            // Calculate drag distance and direction
+                            var width = viewport.clientWidth;
+                            var height = viewport.clientHeight;
+                            var startX = width / 2;
+                            var startY = height / 2;
+                            var endX = startX;
+                            var endY = startY;
+                            
+                            // Set end position based on direction
+                            switch ("{direction}") {{
+                                case "north":
+                                    endY = startY + height * 0.2;
+                                    break;
+                                case "south":
+                                    endY = startY - height * 0.2;
+                                    break;
+                                case "east":
+                                    endX = startX - width * 0.2;
+                                    break;
+                                case "west":
+                                    endX = startX + width * 0.2;
+                                    break;
+                            }}
+                            
+                            // Create and dispatch mouse events to simulate drag
+                            function createMouseEvent(type, x, y) {{
+                                var event = new MouseEvent(type, {{
+                                    bubbles: true,
+                                    cancelable: true,
+                                    view: window,
+                                    clientX: x,
+                                    clientY: y
+                                }});
+                                return event;
+                            }}
+                            
+                            // Simulate mousedown
+                            viewport.dispatchEvent(createMouseEvent('mousedown', startX, startY));
+                            
+                            // Simulate mousemove
+                            viewport.dispatchEvent(createMouseEvent('mousemove', endX, endY));
+                            
+                            // Simulate mouseup
+                            viewport.dispatchEvent(createMouseEvent('mouseup', endX, endY));
+                            
+                            return "Map panned using fallback method";
+                        }} catch (e) {{
+                            console.error("Error in fallback pan:", e);
+                            return "Fallback pan failed: " + e.message;
+                        }}
+                    }})();
+                    """
+                    
+                    self.web_view.page().runJavaScript(
+                        fallback_script, 
+                        lambda result: debug_print(f"Fallback pan result: {result}", 0)
+                    )
+
+        def closeEvent(self, event):
+            """Override closeEvent to save map position and zoom level"""
+            # Save map position and zoom level before closing
+            self.save_map_state()
+            event.accept()
+            
+        def save_map_state(self):
+            """Save the current map center position and zoom level"""
+            script = """
+            (function() {
+                try {
+                    // Find the map object
+                    var map = null;
+                    if (window.map && typeof window.map.getView === 'function') {
+                        map = window.map;
+                    } else {
+                        // Search for the map in global variables
+                        for (var key in window) {
+                            try {
+                                if (typeof window[key] === 'object' && window[key] !== null) {
+                                    var obj = window[key];
+                                    if (typeof obj.getView === 'function' && 
+                                        typeof obj.getTargetElement === 'function') {
+                                        map = obj;
+                                        break;
+                                    }
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                    
+                    if (!map) {
+                        return "Map not found";
+                    }
+                    
+                    var view = map.getView();
+                    if (!view) {
+                        return "View not found";
+                    }
+                    
+                    var center = view.getCenter();
+                    var zoom = view.getZoom();
+                    var projection = view.getProjection().getCode();
+                    
+                    return JSON.stringify({
+                        center: center,
+                        zoom: zoom,
+                        projection: projection
+                    });
+                } catch (e) {
+                    console.error("Error getting map state:", e);
+                    return "Error: " + e.message;
+                }
+            })();
+            """
+            
+            self.web_view.page().runJavaScript(script, self.handle_save_map_state)
+            
+        def handle_save_map_state(self, result):
+            """Handle the result of retrieving the map state for saving"""
+            debug_print(f"Saving map state: {result}", 0)
+            
+            try:
+                if not result or result.startswith("Error") or result.startswith("Map not found"):
+                    debug_print(f"Could not save map state: {result}", 0)
+                    return
+                
+                map_state = json.loads(result)
+                
+                # Store in settings
+                self.settings.setValue("map_center_x", map_state["center"][0])
+                self.settings.setValue("map_center_y", map_state["center"][1])
+                self.settings.setValue("map_zoom", map_state["zoom"])
+                self.settings.setValue("map_projection", map_state["projection"])
+                
+                debug_print(f"Map state saved successfully. Center: {map_state['center']}, Zoom: {map_state['zoom']}", 0)
+                
+            except Exception as e:
+                debug_print(f"Error saving map state: {str(e)}", 0)
+                
+        def restore_map_state(self):
+            """Restore previously saved map position and zoom level"""
+            # Check if we have saved map state
+            if not self.settings.contains("map_center_x"):
+                debug_print("No saved map state found", 0)
+                return
+            
+            # Get saved values
+            center_x = self.settings.value("map_center_x", type=float)
+            center_y = self.settings.value("map_center_y", type=float)
+            zoom = self.settings.value("map_zoom", type=float)
+            projection = self.settings.value("map_projection", "EPSG:3857")
+            
+            script = f"""
+            (function() {{
+                try {{
+                    // Find the map object
+                    var map = null;
+                    if (window.map && typeof window.map.getView === 'function') {{
+                        map = window.map;
+                    }} else {{
+                        // Search for the map in global variables
+                        for (var key in window) {{
+                            try {{
+                                if (typeof window[key] === 'object' && window[key] !== null) {{
+                                    var obj = window[key];
+                                    if (typeof obj.getView === 'function' && 
+                                        typeof obj.getTargetElement === 'function') {{
+                                        map = obj;
+                                        break;
+                                    }}
+                                }}
+                            }} catch (e) {{}}
+                        }}
+                    }}
+                    
+                    if (!map) {{
+                        return "Map not found";
+                    }}
+                    
+                    var view = map.getView();
+                    if (!view) {{
+                        return "View not found";
+                    }}
+                    
+                    // Check if the projection matches
+                    var currentProj = view.getProjection().getCode();
+                    if (currentProj === "{projection}") {{
+                        // Same projection, set directly
+                        view.setCenter([{center_x}, {center_y}]);
+                        view.setZoom({zoom});
+                        return "Map position and zoom restored directly";
+                    }} else {{
+                        // Different projection, need to transform coordinates
+                        if (window.ol && window.ol.proj && typeof window.ol.proj.transform === 'function') {{
+                            var transformedCenter = window.ol.proj.transform(
+                                [{center_x}, {center_y}],
+                                "{projection}",
+                                currentProj
+                            );
+                            view.setCenter(transformedCenter);
+                            view.setZoom({zoom});
+                            return "Map position and zoom restored with projection transformation";
+                        }} else {{
+                            // Fallback: just set the values directly
+                            view.setCenter([{center_x}, {center_y}]);
+                            view.setZoom({zoom});
+                            return "Map position and zoom restored (without projection transformation)";
+                        }}
+                    }}
+                }} catch (e) {{
+                    console.error("Error restoring map state:", e);
+                    return "Error: " + e.message;
+                }}
+            }})();
+            """
+            
+            debug_print(f"Restoring map to center: [{center_x}, {center_y}], zoom: {zoom}", 0)
+            self.web_view.page().runJavaScript(script, lambda result: debug_print(f"Restore map state result: {result}", 0))
+
+        def parse_geological_info(self, content):
+            """Parse the geological information text to extract structured data"""
+            # Initialize the dictionary to store the extracted information
+            info_dict = {
+                'symbol': '',
+                'stratum': '',
+                'rock_type': '',
+                'era': '',
+                'map_sheet': '',
+                'address': ''
+            }
+            
+            # Split the content into lines
+            lines = content.strip().split('\n')
+            
+            # Extract information using pattern matching
+            for line in lines:
+                line = line.strip()
+                
+                # Symbol (기호)
+                if '기호' in line or 'symbol' in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        info_dict['symbol'] = parts[1].strip()
+                
+                # Stratum (지층)
+                elif '지층' in line or 'stratum' in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        info_dict['stratum'] = parts[1].strip()
+                
+                # Rock Type (대표암상)
+                elif '대표암상' in line or 'rock' in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        info_dict['rock_type'] = parts[1].strip()
+                
+                # Era (시대)
+                elif '시대' in line or 'era' in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        info_dict['era'] = parts[1].strip()
+                
+                # Map Sheet (도폭)
+                elif '도폭' in line or 'map sheet' in line.lower():
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        info_dict['map_sheet'] = parts[1].strip()
+                
+                # Address (주소)
+                elif '주소' in line or 'address' in line.lower():
+                    # Special handling for address which might be on a separate line
+                    parts = line.split(':', 1)
+                    if len(parts) > 1 and parts[1].strip():
+                        info_dict['address'] = parts[1].strip()
+                    elif len(lines) > lines.index(line) + 1 and not ':' in lines[lines.index(line) + 1]:
+                        # If the next line doesn't have a colon, it might be the address
+                        next_line = lines[lines.index(line) + 1].strip()
+                        if next_line and not next_line.startswith('인쇄') and not next_line.startswith('오류'):
+                            info_dict['address'] = next_line
+            
+            # If minimal extraction was successful
+            if info_dict['symbol'] or info_dict['stratum']:
+                return info_dict
+            else:
+                # Try a fallback method - look for Korean characters followed by ":"
+                korean_regex = re.compile(r'([가-힣]+)\s*:\s*([^\n]+)')
+                matches = korean_regex.findall(content)
+                
+                for match in matches:
+                    key, value = match
+                    if '기호' in key:
+                        info_dict['symbol'] = value.strip()
+                    elif '지층' in key:
+                        info_dict['stratum'] = value.strip()
+                    elif '대표암상' in key:
+                        info_dict['rock_type'] = value.strip()
+                    elif '시대' in key:
+                        info_dict['era'] = value.strip()
+                    elif '도폭' in key:
+                        info_dict['map_sheet'] = value.strip()
+                    elif '주소' in key:
+                        info_dict['address'] = value.strip()
+                
+                return info_dict
+
+        def on_table_selection_changed(self):
+            """Handle selection changes in the geo_table"""
+            # Enable the delete button if any row is selected, disable otherwise
+            has_selection = len(self.geo_table.selectedItems()) > 0
+            self.delete_row_button.setEnabled(has_selection)
+            
+        def delete_selected_row(self):
+            """Delete the selected row from the table and database"""
+            selected_rows = sorted(set(index.row() for index in self.geo_table.selectedIndexes()))
+            
+            if not selected_rows:
+                return
+                
+            # Ask for confirmation
+            count = len(selected_rows)
+            reply = QMessageBox.question(
+                self, 'Confirm Delete', 
+                f'Are you sure you want to delete {count} selected row{"s" if count > 1 else ""}?',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            
+            if reply != QMessageBox.Yes:
+                return
+                
+            try:
+                # Connect to the database
+                db.connect()
+                
+                # Get the database records to delete
+                records = GeologicalRecord.select()
+                
+                # Process rows in reverse order to avoid changing indices during removal
+                for row in reversed(selected_rows):
+                    # Get the ID from the database (we'll need to identify this row in the database)
+                    # We'll use symbol, stratum, rock_type, and coords to find matching records
+                    symbol = self.geo_table.item(row, 0).text() if self.geo_table.item(row, 0) else ""
+                    rock_type = self.geo_table.item(row, 2).text() if self.geo_table.item(row, 2) else ""
+                    
+                    # Get coordinate values for matching
+                    x1 = self.geo_table.item(row, 8).text() if row < self.geo_table.rowCount() and self.geo_table.columnCount() > 8 and self.geo_table.item(row, 8) else None
+                    y1 = self.geo_table.item(row, 9).text() if row < self.geo_table.rowCount() and self.geo_table.columnCount() > 9 and self.geo_table.item(row, 9) else None
+                    
+                    # Try to find and delete matching records from the database
+                    query = records
+                    if symbol:
+                        query = query.where(GeologicalRecord.symbol == symbol)
+                    if rock_type:
+                        query = query.where(GeologicalRecord.rock_type == rock_type)
+                    if x1 and y1:
+                        try:
+                            x1_val = float(x1)
+                            y1_val = float(y1)
+                            query = query.where(GeologicalRecord.x_coord_1 == x1_val, GeologicalRecord.y_coord_1 == y1_val)
+                        except (ValueError, TypeError):
+                            pass
+                            
+                    # Delete matching records
+                    count = query.count()
+                    if count > 0:
+                        for record in query:
+                            record.delete_instance()
+                        debug_print(f"Deleted {count} database record(s) matching row {row}", 0)
+                    
+                    # Remove row from the table
+                    self.geo_table.removeRow(row)
+                    debug_print(f"Deleted row {row} from table", 0)
+                
+                # Show confirmation
+                self.statusBar().showMessage(f"Deleted {len(selected_rows)} row(s) from table and database", 3000)
+            except Exception as e:
+                debug_print(f"Error deleting rows: {str(e)}", 0)
+                QMessageBox.warning(self, "Delete Error", f"Error deleting rows: {str(e)}")
+            finally:
+                if not db.is_closed():
+                    db.close()
 
 else:
     class KIGAMMapWindow:
