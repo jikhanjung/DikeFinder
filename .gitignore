@@ -3,3 +3,4 @@ build/
 *.spec
 *.db
 *.db-journal
+*.pyc
