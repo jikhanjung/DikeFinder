@@ -233,6 +233,16 @@ if WEB_ENGINE_AVAILABLE:
             self.add_to_table_button.clicked.connect(self.add_current_info_to_table)
             self.add_to_table_button.setEnabled(False)  # Initially disabled until we have data
             
+            self.delete_row_button = QPushButton("Delete Selected")
+            self.delete_row_button.setToolTip("Delete the selected row from the table")
+            self.delete_row_button.clicked.connect(self.delete_selected_row)
+            self.delete_row_button.setEnabled(False)  # Initially disabled until a row is selected
+            
+            self.center_selected_button = QPushButton("Center Selected")
+            self.center_selected_button.setToolTip("Center the map on the selected row's coordinates")
+            self.center_selected_button.clicked.connect(self.center_map_on_selected)
+            self.center_selected_button.setEnabled(False)  # Initially disabled until a row is selected
+            
             self.clear_table_button = QPushButton("Clear Table")
             self.clear_table_button.setToolTip("Clear all rows from the table")
             self.clear_table_button.clicked.connect(self.clear_geo_table)
@@ -241,13 +251,9 @@ if WEB_ENGINE_AVAILABLE:
             self.export_table_button.setToolTip("Export the table data to a CSV file")
             self.export_table_button.clicked.connect(self.export_geo_table)
             
-            self.delete_row_button = QPushButton("Delete Selected")
-            self.delete_row_button.setToolTip("Delete the selected row from the table")
-            self.delete_row_button.clicked.connect(self.delete_selected_row)
-            self.delete_row_button.setEnabled(False)  # Initially disabled until a row is selected
-            
             table_controls_layout.addWidget(self.add_to_table_button)
             table_controls_layout.addWidget(self.delete_row_button)
+            table_controls_layout.addWidget(self.center_selected_button)
             table_controls_layout.addWidget(self.clear_table_button)
             table_controls_layout.addWidget(self.export_table_button)
             
@@ -373,10 +379,20 @@ if WEB_ENGINE_AVAILABLE:
                     
                     # Add distance and angle if available
                     if record.distance is not None:
-                        self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{record.distance} m"))
+                        self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{record.distance}m"))
                     
                     if record.angle is not None:
                         self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{record.angle}°"))
+                    
+                    # format coords to 3 decimal places
+                    record.x_coord_1 = round(record.x_coord_1, 3)
+                    record.y_coord_1 = round(record.y_coord_1, 3)
+                    record.lat_1 = round(record.lat_1, 6)
+                    record.lng_1 = round(record.lng_1, 6)
+                    record.x_coord_2 = round(record.x_coord_2, 3)
+                    record.y_coord_2 = round(record.y_coord_2, 3)
+                    record.lat_2 = round(record.lat_2, 6)
+                    record.lng_2 = round(record.lng_2, 6)
                     
                     # Add coordinates
                     if record.x_coord_1 is not None:
@@ -1889,6 +1905,17 @@ if WEB_ENGINE_AVAILABLE:
                     self.info_button.setChecked(False)
                     self.info_tool_active = False
                 
+                self.current_distance_measurement = None
+                self.current_angle_measurement = None
+                self.current_raw_x = None
+                self.current_raw_y = None
+                self.current_lat = None
+                self.current_lng = None
+                self.previous_raw_x = None
+                self.previous_raw_y = None
+                self.previous_lat = None
+                self.previous_lng = None
+                
                 debug_print(f"Distance tool activated", 0)
                 self.statusBar().showMessage("Distance tool activated. Click first point to start, click second point to capture distance.", 5000)
                 
@@ -2466,9 +2493,10 @@ if WEB_ENGINE_AVAILABLE:
 
         def on_table_selection_changed(self):
             """Handle selection changes in the geo_table"""
-            # Enable the delete button if any row is selected, disable otherwise
+            # Enable the delete and center buttons if any row is selected, disable otherwise
             has_selection = len(self.geo_table.selectedItems()) > 0
             self.delete_row_button.setEnabled(has_selection)
+            self.center_selected_button.setEnabled(has_selection)
             
         def delete_selected_row(self):
             """Delete the selected row from the table and database"""
@@ -2539,6 +2567,153 @@ if WEB_ENGINE_AVAILABLE:
             finally:
                 if not db.is_closed():
                     db.close()
+
+        def center_map_on_selected(self):
+            """Center the map on the selected row's coordinates"""
+            selected_indexes = self.geo_table.selectedIndexes()
+            if not selected_indexes:
+                QMessageBox.warning(self, "No Selection", "Please select a row first.")
+                return
+            
+            # Get the row number from the first selected index
+            selected_row = selected_indexes[0].row()
+            
+            # Get the coordinates from the row (checking both sets of coordinates)
+            lat1 = None
+            lng1 = None
+            x1 = None
+            y1 = None
+            
+            try:
+                # Try lat/lng coordinates first (WGS84) - columns 10 and 11
+                if (self.geo_table.columnCount() > 11 and 
+                    self.geo_table.item(selected_row, 10) and 
+                    self.geo_table.item(selected_row, 11)):
+                    lat1_item = self.geo_table.item(selected_row, 10)
+                    lng1_item = self.geo_table.item(selected_row, 11)
+                    
+                    if lat1_item and lng1_item and lat1_item.text() and lng1_item.text():
+                        lat1 = float(lat1_item.text())
+                        lng1 = float(lng1_item.text())
+                        debug_print(f"Found WGS84 coordinates: Lat={lat1}, Lng={lng1}", 0)
+                
+                # If WGS84 coordinates aren't available, try raw coordinates - columns 8 and 9
+                if lat1 is None or lng1 is None:
+                    if (self.geo_table.columnCount() > 9 and 
+                        self.geo_table.item(selected_row, 8) and 
+                        self.geo_table.item(selected_row, 9)):
+                        x1_item = self.geo_table.item(selected_row, 8)
+                        y1_item = self.geo_table.item(selected_row, 9)
+                        
+                        if x1_item and y1_item and x1_item.text() and y1_item.text():
+                            x1 = float(x1_item.text())
+                            y1 = float(y1_item.text())
+                            debug_print(f"Found raw coordinates: X={x1}, Y={y1}", 0)
+                
+                # If we don't have any coordinates, display error
+                if (lat1 is None or lng1 is None) and (x1 is None or y1 is None):
+                    QMessageBox.warning(self, "No Coordinates", "Selected row doesn't have valid coordinates.")
+                    return
+                
+                # Create JavaScript to center the map using the available coordinates
+                if lat1 is not None and lng1 is not None:
+                    # Using WGS84 coordinates
+                    center_script = f"""
+                    (function() {{
+                        try {{
+                            // Find the map object
+                            var map = null;
+                            if (window.map && typeof window.map.getView === 'function') {{
+                                map = window.map;
+                            }} else {{
+                                // Look for the map in global variables
+                                for (var key in window) {{
+                                    try {{
+                                        if (typeof window[key] === 'object' && window[key] !== null) {{
+                                            var obj = window[key];
+                                            if (typeof obj.getView === 'function' && 
+                                                typeof obj.getTargetElement === 'function') {{
+                                                map = obj;
+                                                break;
+                                            }}
+                                        }}
+                                    }} catch (e) {{}}
+                                }}
+                            }}
+                            
+                            if (!map) {{
+                                return "Map not found";
+                            }}
+                            
+                            // Transform WGS84 coordinates to map projection
+                            var fromLonLat = ol.proj.fromLonLat || ol.proj.transform;
+                            if (typeof fromLonLat === 'function') {{
+                                var center = fromLonLat([{lng1}, {lat1}], map.getView().getProjection().getCode());
+                                map.getView().setCenter(center);
+                                map.getView().setZoom(15);  // Adjust zoom level as needed
+                                return "Map centered on WGS84 coordinates";
+                            }} else {{
+                                return "Transformation function not found";
+                            }}
+                        }} catch (e) {{
+                            console.error("Error centering map:", e);
+                            return "Error: " + e.message;
+                        }}
+                    }})();
+                    """
+                else:
+                    # Using raw coordinates
+                    center_script = f"""
+                    (function() {{
+                        try {{
+                            // Find the map object
+                            var map = null;
+                            if (window.map && typeof window.map.getView === 'function') {{
+                                map = window.map;
+                            }} else {{
+                                // Look for the map in global variables
+                                for (var key in window) {{
+                                    try {{
+                                        if (typeof window[key] === 'object' && window[key] !== null) {{
+                                            var obj = window[key];
+                                            if (typeof obj.getView === 'function' && 
+                                                typeof obj.getTargetElement === 'function') {{
+                                                map = obj;
+                                                break;
+                                            }}
+                                        }}
+                                    }} catch (e) {{}}
+                                }}
+                            }}
+                            
+                            if (!map) {{
+                                return "Map not found";
+                            }}
+                            
+                            map.getView().setCenter([{x1}, {y1}]);
+                            map.getView().setZoom(15);  // Adjust zoom level as needed
+                            return "Map centered on raw coordinates";
+                        }} catch (e) {{
+                            console.error("Error centering map:", e);
+                            return "Error: " + e.message;
+                        }}
+                    }})();
+                    """
+                
+                # Execute the script and handle the result
+                self.web_view.page().runJavaScript(center_script, self.handle_center_map_result)
+                
+            except Exception as e:
+                debug_print(f"Error centering map: {str(e)}", 0)
+                QMessageBox.warning(self, "Error", f"Failed to center map: {str(e)}")
+        
+        def handle_center_map_result(self, result):
+            """Handle the result of the map centering operation"""
+            debug_print(f"Center map result: {result}", 0)
+            if result.startswith("Error") or result == "Map not found" or result == "Transformation function not found":
+                QMessageBox.warning(self, "Center Map Error", result)
+            else:
+                self.statusBar().showMessage(f"Map centered on selected coordinates", 3000)
 
 else:
     class KIGAMMapWindow:
