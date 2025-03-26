@@ -234,7 +234,7 @@ class KIGAMMapWindow(QMainWindow):
         
         # Create the actual table for geological data
         self.geo_table = QTableWidget()
-        self.geo_table.setColumnCount(8)  # Increased from 6 to 8 for distance and angle
+        self.geo_table.setColumnCount(8)
         self.geo_table.setHorizontalHeaderLabels(["기호 (Symbol)", "지층 (Stratum)", 
                                                 "대표암상 (Rock Type)", "시대 (Era)", 
                                                 "도폭 (Map Sheet)", "주소 (Address)",
@@ -242,12 +242,22 @@ class KIGAMMapWindow(QMainWindow):
         self.geo_table.horizontalHeader().setStretchLastSection(True)
         self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
+        # Set selection behavior to select entire rows
+        self.geo_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.geo_table.setSelectionMode(QTableWidget.SingleSelection)
+        
+        # Disable editing
+        self.geo_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
         # Enable vertical scrollbar
         self.geo_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.geo_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
         # Connect selection changed signal to enable/disable delete button
         self.geo_table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        
+        # Add double-click handler
+        self.geo_table.cellDoubleClicked.connect(self.on_table_double_click)
         
         self.table_layout.addWidget(self.geo_table)
         
@@ -332,38 +342,38 @@ class KIGAMMapWindow(QMainWindow):
                 self.geo_table.insertRow(row)
                 
                 # Add basic information to table
-                self.geo_table.setItem(row, 0, QTableWidgetItem(record.symbol or ""))
-                self.geo_table.setItem(row, 1, QTableWidgetItem(record.stratum or ""))
-                self.geo_table.setItem(row, 2, QTableWidgetItem(record.rock_type or ""))
-                self.geo_table.setItem(row, 3, QTableWidgetItem(record.era or ""))
-                self.geo_table.setItem(row, 4, QTableWidgetItem(record.map_sheet or ""))
-                self.geo_table.setItem(row, 5, QTableWidgetItem(record.address or ""))
+                self.geo_table.setItem(row, 0, QTableWidgetItem(str(record.symbol or "")))
+                self.geo_table.setItem(row, 1, QTableWidgetItem(str(record.stratum or "")))
+                self.geo_table.setItem(row, 2, QTableWidgetItem(str(record.rock_type or "")))
+                self.geo_table.setItem(row, 3, QTableWidgetItem(str(record.era or "")))
+                self.geo_table.setItem(row, 4, QTableWidgetItem(str(record.map_sheet or "")))
+                self.geo_table.setItem(row, 5, QTableWidgetItem(str(record.address or "")))
                 
                 # Add distance and angle if available
-                if record.distance is not None:
-                    self.geo_table.setItem(row, 6, QTableWidgetItem(f"{record.distance:.1f}m"))
-                if record.angle is not None:
-                    self.geo_table.setItem(row, 7, QTableWidgetItem(f"{record.angle:.1f}°"))
+                if record.distance is not None and isinstance(record.distance, (int, float)):
+                    self.geo_table.setItem(row, 6, QTableWidgetItem(f"{float(record.distance):.1f}m"))
+                if record.angle is not None and isinstance(record.angle, (int, float)):
+                    self.geo_table.setItem(row, 7, QTableWidgetItem(f"{float(record.angle):.1f}°"))
                 
                 # Add first set of coordinates (X1, Y1, Lat1, Lng1)
-                if record.x_coord_1 is not None:
-                    self.geo_table.setItem(row, 8, QTableWidgetItem(f"{record.x_coord_1:.3f}"))
-                if record.y_coord_1 is not None:
-                    self.geo_table.setItem(row, 9, QTableWidgetItem(f"{record.y_coord_1:.3f}"))
-                if record.lat_1 is not None:
-                    self.geo_table.setItem(row, 10, QTableWidgetItem(f"{record.lat_1:.6f}"))
-                if record.lng_1 is not None:
-                    self.geo_table.setItem(row, 11, QTableWidgetItem(f"{record.lng_1:.6f}"))
+                if record.x_coord_1 is not None and isinstance(record.x_coord_1, (int, float)):
+                    self.geo_table.setItem(row, 8, QTableWidgetItem(f"{float(record.x_coord_1):.3f}"))
+                if record.y_coord_1 is not None and isinstance(record.y_coord_1, (int, float)):
+                    self.geo_table.setItem(row, 9, QTableWidgetItem(f"{float(record.y_coord_1):.3f}"))
+                if record.lat_1 is not None and isinstance(record.lat_1, (int, float)):
+                    self.geo_table.setItem(row, 10, QTableWidgetItem(f"{float(record.lat_1):.6f}"))
+                if record.lng_1 is not None and isinstance(record.lng_1, (int, float)):
+                    self.geo_table.setItem(row, 11, QTableWidgetItem(f"{float(record.lng_1):.6f}"))
                 
                 # Add second set of coordinates (X2, Y2, Lat2, Lng2)
-                if record.x_coord_2 is not None:
-                    self.geo_table.setItem(row, 12, QTableWidgetItem(f"{record.x_coord_2:.3f}"))
-                if record.y_coord_2 is not None:
-                    self.geo_table.setItem(row, 13, QTableWidgetItem(f"{record.y_coord_2:.3f}"))
-                if record.lat_2 is not None:
-                    self.geo_table.setItem(row, 14, QTableWidgetItem(f"{record.lat_2:.6f}"))
-                if record.lng_2 is not None:
-                    self.geo_table.setItem(row, 15, QTableWidgetItem(f"{record.lng_2:.6f}"))
+                if record.x_coord_2 is not None and isinstance(record.x_coord_2, (int, float)):
+                    self.geo_table.setItem(row, 12, QTableWidgetItem(f"{float(record.x_coord_2):.3f}"))
+                if record.y_coord_2 is not None and isinstance(record.y_coord_2, (int, float)):
+                    self.geo_table.setItem(row, 13, QTableWidgetItem(f"{float(record.y_coord_2):.3f}"))
+                if record.lat_2 is not None and isinstance(record.lat_2, (int, float)):
+                    self.geo_table.setItem(row, 14, QTableWidgetItem(f"{float(record.lat_2):.6f}"))
+                if record.lng_2 is not None and isinstance(record.lng_2, (int, float)):
+                    self.geo_table.setItem(row, 15, QTableWidgetItem(f"{float(record.lng_2):.6f}"))
             
             # Adjust column widths
             self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -1551,7 +1561,10 @@ class KIGAMMapWindow(QMainWindow):
             
             # Save to database
             try:
-                db.connect()
+                # Check if connection is already open
+                if db.is_closed():
+                    db.connect()
+                
                 record = GeologicalRecord.create(
                     symbol=info_dict.get('symbol', ''),
                     stratum=info_dict.get('stratum', ''),
@@ -2512,7 +2525,7 @@ class KIGAMMapWindow(QMainWindow):
                 db.close()
 
     def center_map_on_selected(self):
-        """Center the map on the selected row's coordinates"""
+        """Center the map on the selected row's coordinates and show a line marker representing the dike"""
         selected_indexes = self.geo_table.selectedIndexes()
         if not selected_indexes:
             QMessageBox.warning(self, "No Selection", "Please select a row first.")
@@ -2521,127 +2534,126 @@ class KIGAMMapWindow(QMainWindow):
         # Get the row number from the first selected index
         selected_row = selected_indexes[0].row()
         
-        # Get the coordinates from the row (checking both sets of coordinates)
-        lat1 = None
-        lng1 = None
-        x1 = None
-        y1 = None
-        
         try:
-            # Try lat/lng coordinates first (WGS84) - columns 10 and 11
-            if (self.geo_table.columnCount() > 11 and 
-                self.geo_table.item(selected_row, 10) and 
-                self.geo_table.item(selected_row, 11)):
-                lat1_item = self.geo_table.item(selected_row, 10)
-                lng1_item = self.geo_table.item(selected_row, 11)
-                
-                if lat1_item and lng1_item and lat1_item.text() and lng1_item.text():
-                    lat1 = float(lat1_item.text())
-                    lng1 = float(lng1_item.text())
-                    debug_print(f"Found WGS84 coordinates: Lat={lat1}, Lng={lng1}", 0)
-            
-            # If WGS84 coordinates aren't available, try raw coordinates - columns 8 and 9
-            if lat1 is None or lng1 is None:
-                if (self.geo_table.columnCount() > 9 and 
-                    self.geo_table.item(selected_row, 8) and 
-                    self.geo_table.item(selected_row, 9)):
-                    x1_item = self.geo_table.item(selected_row, 8)
-                    y1_item = self.geo_table.item(selected_row, 9)
+            # Collect all points from the table
+            all_points = []
+            for row in range(self.geo_table.rowCount()):
+                try:
+                    # Get distance and angle for this row
+                    distance_item = self.geo_table.item(row, 6)
+                    angle_item = self.geo_table.item(row, 7)
+                    distance = float(distance_item.text().replace('m', '')) if distance_item else None
+                    angle = float(angle_item.text().replace('°', '')) if angle_item else None
                     
-                    if x1_item and y1_item and x1_item.text() and y1_item.text():
-                        x1 = float(x1_item.text())
-                        y1 = float(y1_item.text())
-                        debug_print(f"Found raw coordinates: X={x1}, Y={y1}", 0)
-            
-            # If we don't have any coordinates, display error
-            if (lat1 is None or lng1 is None) and (x1 is None or y1 is None):
-                QMessageBox.warning(self, "No Coordinates", "Selected row doesn't have valid coordinates.")
-                return
-            
-            # Create JavaScript to center the map using the available coordinates
-            if lat1 is not None and lng1 is not None:
-                # Using WGS84 coordinates
-                center_script = f"""
-                (function() {{
-                    try {{
-                        // Find the map object
-                        var map = null;
-                        if (window.map && typeof window.map.getView === 'function') {{
-                            map = window.map;
-                        }} else {{
-                            // Look for the map in global variables
-                            for (var key in window) {{
-                                try {{
-                                    if (typeof window[key] === 'object' && window[key] !== null) {{
-                                        var obj = window[key];
-                                        if (typeof obj.getView === 'function' && 
-                                            typeof obj.getTargetElement === 'function') {{
-                                            map = obj;
-                                            break;
-                                        }}
-                                    }}
-                                }} catch (e) {{}}
-                            }}
+                    # Get coordinates for this row
+                    lat1_item = self.geo_table.item(row, 10)
+                    lng1_item = self.geo_table.item(row, 11)
+                    lat2_item = self.geo_table.item(row, 14)
+                    lng2_item = self.geo_table.item(row, 15)
+                    
+                    if lat1_item and lng1_item and lat1_item.text() and lng1_item.text():
+                        point = {
+                            'lat1': float(lat1_item.text()),
+                            'lng1': float(lng1_item.text()),
+                            'lat2': float(lat2_item.text()) if lat2_item and lat2_item.text() else None,
+                            'lng2': float(lng2_item.text()) if lng2_item and lng2_item.text() else None,
+                            'distance': distance,
+                            'angle': angle,
+                            'isSelected': row == selected_row
+                        }
+                        all_points.append(point)
+                except (ValueError, AttributeError) as e:
+                    debug_print(f"Error processing row {row}: {str(e)}", 0)
+                    continue
+
+            # Create JavaScript to center the map and add markers
+            center_script = f"""
+            (function() {{
+                try {{
+                    var map = null;
+                    if (window.map && typeof window.map.getView === 'function') {{
+                        map = window.map;
+                    }} else {{
+                        for (var key in window) {{
+                            try {{
+                                if (typeof window[key] === 'object' && window[key] !== null &&
+                                    typeof window[key].getView === 'function') {{
+                                    map = window[key];
+                                    break;
+                                }}
+                            }} catch (e) {{}}
                         }}
-                        
-                        if (!map) {{
-                            return "Map not found";
-                        }}
-                        
-                        // Transform WGS84 coordinates to map projection
-                        var fromLonLat = ol.proj.fromLonLat || ol.proj.transform;
-                        if (typeof fromLonLat === 'function') {{
-                            var center = fromLonLat([{lng1}, {lat1}], map.getView().getProjection().getCode());
-                            map.getView().setCenter(center);
-                            map.getView().setZoom(15);  // Adjust zoom level as needed
-                            return "Map centered on WGS84 coordinates";
-                        }} else {{
-                            return "Transformation function not found";
-                        }}
-                    }} catch (e) {{
-                        console.error("Error centering map:", e);
-                        return "Error: " + e.message;
                     }}
-                }})();
-                """
-            else:
-                # Using raw coordinates
-                center_script = f"""
-                (function() {{
-                    try {{
-                        // Find the map object
-                        var map = null;
-                        if (window.map && typeof window.map.getView === 'function') {{
-                            map = window.map;
-                        }} else {{
-                            // Look for the map in global variables
-                            for (var key in window) {{
-                                try {{
-                                    if (typeof window[key] === 'object' && window[key] !== null) {{
-                                        var obj = window[key];
-                                        if (typeof obj.getView === 'function' && 
-                                            typeof obj.getTargetElement === 'function') {{
-                                            map = obj;
-                                            break;
-                                        }}
-                                    }}
-                                }} catch (e) {{}}
-                            }}
-                        }}
+                    
+                    if (!map) return "Map not found";
+                    
+                    // Remove existing marker layer
+                    map.getLayers().getArray()
+                        .filter(layer => layer.get('name') === 'markerLayer')
+                        .forEach(layer => map.removeLayer(layer));
+                    
+                    var fromLonLat = ol.proj.fromLonLat || ol.proj.transform;
+                    var features = [];
+                    
+                    // Add all points from the table
+                    var points = {json.dumps(all_points)};
+                    points.forEach(function(point) {{
+                        var center = fromLonLat([point.lng1, point.lat1], map.getView().getProjection().getCode());
                         
-                        if (!map) {{
-                            return "Map not found";
+                        // Calculate end point using distance and angle if available
+                        if (point.distance && point.angle) {{
+                            var distance = point.distance;
+                            var angle = point.angle;
+                            var angleRad = (90 - angle) * Math.PI / 180;
+                            var dx = distance * Math.cos(angleRad);
+                            var dy = distance * Math.sin(angleRad);
+                            var endPoint = [center[0] + dx, center[1] + dy];
+                            
+                            // Create line feature
+                            var lineFeature = new ol.Feature({{
+                                geometry: new ol.geom.LineString([center, endPoint])
+                            }});
+                            
+                            // Create line style - red for selected, blue for others
+                            var lineStyle = new ol.style.Style({{
+                                stroke: new ol.style.Stroke({{
+                                    color: point.isSelected ? 'red' : 'blue',
+                                    width: point.isSelected ? 3 : 2
+                                }})
+                            }});
+                            
+                            lineFeature.setStyle(lineStyle);
+                            features.push(lineFeature);
                         }}
-                        
-                        map.getView().setCenter([{x1}, {y1}]);
-                        map.getView().setZoom(15);  // Adjust zoom level as needed
-                        return "Map centered on raw coordinates";
-                    }} catch (e) {{
-                        console.error("Error centering map:", e);
-                        return "Error: " + e.message;
+                    }});
+                    
+                    // Create vector layer with all features
+                    var vectorLayer = new ol.layer.Vector({{
+                        source: new ol.source.Vector({{
+                            features: features
+                        }}),
+                        name: 'markerLayer'
+                    }});
+                    
+                    // Add layer to map
+                    map.addLayer(vectorLayer);
+                    
+                    // Center map on selected point
+                    var selectedPoint = points.find(p => p.isSelected);
+                    if (selectedPoint) {{
+                        var selectedCenter = fromLonLat([selectedPoint.lng1, selectedPoint.lat1], 
+                                                      map.getView().getProjection().getCode());
+                        map.getView().setCenter(selectedCenter);
+                        map.getView().setZoom(15);
                     }}
-                }})();
-                """
+                    
+                    return "Map centered and all dike lines added";
+                }} catch (e) {{
+                    console.error("Error:", e);
+                    return "Error: " + e.message;
+                }}
+            }})();
+            """
             
             # Execute the script and handle the result
             self.web_view.page().runJavaScript(center_script, self.handle_center_map_result)
@@ -2657,6 +2669,11 @@ class KIGAMMapWindow(QMainWindow):
             QMessageBox.warning(self, "Center Map Error", result)
         else:
             self.statusBar().showMessage(f"Map centered on selected coordinates", 3000)
+
+    def on_table_double_click(self, row, column):
+        """Handle double-click on table row by centering the map on the selected coordinates"""
+        debug_print(f"Double-clicked row {row}, column {column}", 0)
+        self.center_map_on_selected()
 
 # Main function to run the application as standalone
 def main():

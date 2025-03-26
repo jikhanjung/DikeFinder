@@ -101,7 +101,12 @@ class ExcelConverterApp(QMainWindow):
             # Convert distance from km to meters
             if '거리 (km)' in self.df.columns:
                 self.df['거리 (km)'] = self.df['거리 (km)'] * 1000
-            
+
+            # Fix angle calculation
+            if '각도' in self.df.columns:
+                # Apply the angle transformation row by row
+                self.df['각도'] = self.df['각도'].apply(lambda x: (90 - x + 360) % 360 if pd.notnull(x) else x)
+
             # Create records for each row
             records = []
             for _, row in self.df.iterrows():
