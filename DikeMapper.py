@@ -18,7 +18,7 @@ from peewee import *
 import datetime
 
 # Database setup
-db = SqliteDatabase('dikefinder.db')
+db = SqliteDatabase('DikeMapper.db')
 
 # Define database models
 class BaseModel(Model):
@@ -76,7 +76,7 @@ if WEB_ENGINE_AVAILABLE:
         
         def __init__(self, parent=None):
             super().__init__(parent)
-            self.setWindowTitle("KIGAM Geological Map")
+            self.setWindowTitle("DikeMapper v0.0.2 - KIGAM Geological Map")
             self.setGeometry(200, 200, 1000, 800)
             
             # Initialize database
@@ -88,7 +88,7 @@ if WEB_ENGINE_AVAILABLE:
             self.layout = QVBoxLayout(self.central_widget)
             
             # Settings for credential storage
-            self.settings = QSettings("DikeFinder", "KIGAMMap")
+            self.settings = QSettings("PaleoBytes", "DikeMapper")
             
             # Map view position and zoom storage
             self.current_map_center = None
@@ -1449,13 +1449,13 @@ if WEB_ENGINE_AVAILABLE:
             
             # Format the coordinate display
             if self.current_lat is not None and self.current_lng is not None:
-                self.coords_label1.setText(f"Coord 1: Lat {self.current_lat:.6f}, Lng {self.current_lng:.6f}")      
+                self.coords_label1.setText(f"Curr.: Lat/Lng ({self.current_lat:.6f},{self.current_lng:.6f}) / Raw ({self.current_raw_x:.3f},{self.current_raw_y:.3f})")
             else:
-                self.coords_label1.setText("Coord 1: N/A")
+                self.coords_label1.setText("Curr.: N/A")
             if self.previous_lat is not None and self.previous_lng is not None:
-                self.coords_label2.setText(f"Coord 2: Lat {self.previous_lat:.6f}, Lng {self.previous_lng:.6f}")
+                self.coords_label2.setText(f"Prev.: Lat/Lng ({self.previous_lat:.6f},{self.previous_lng:.6f}) / Raw ({self.previous_raw_x:.3f},{self.previous_raw_y:.3f})")
             else:
-                self.coords_label2.setText("Coord 2: N/A")
+                self.coords_label2.setText("Prev.: N/A")
             
             # Check if we have geological information to add to the table
             if self.current_geo_info:
@@ -1514,8 +1514,8 @@ if WEB_ENGINE_AVAILABLE:
                 # Add distance and angle if available
                 if hasattr(self, 'current_distance_measurement') and self.current_distance_measurement is not None:
                     debug_print(f"Processing distance measurement: {self.current_distance_measurement}", 0)
-                    self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{self.current_distance_measurement} m"))
-                    debug_print(f"Added distance to table: {self.current_distance_measurement} m", 0)
+                    self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{self.current_distance_measurement}m"))
+                    debug_print(f"Added distance to table: {self.current_distance_measurement}m", 0)
                     
                     # Convert to float for database
                     try:
@@ -1537,6 +1537,15 @@ if WEB_ENGINE_AVAILABLE:
                 
                 # Add previous coordinates (X1, Y1, Lat1, Lng1) - starting at column 8
                 prev_x, prev_y, prev_lat, prev_lng = None, None, None, None
+                # trim the previous_raw_x and previous_raw_y to 3 decimal places
+                self.previous_raw_x = round(self.previous_raw_x, 3)
+                self.previous_raw_y = round(self.previous_raw_y, 3)
+                self.current_raw_x = round(self.current_raw_x, 3)
+                self.current_raw_y = round(self.current_raw_y, 3)
+                self.previous_lat = round(self.previous_lat, 6)
+                self.previous_lng = round(self.previous_lng, 6)
+                self.current_lat = round(self.current_lat, 6)
+                self.current_lng = round(self.current_lng, 6)
                 
                 if hasattr(self, 'previous_raw_x') and self.previous_raw_x is not None:
                     self.geo_table.setItem(row_position, 8, QTableWidgetItem(str(self.previous_raw_x)))
@@ -2557,3 +2566,8 @@ def main():
 
 if __name__ == "__main__":
     main() 
+
+
+'''
+pyinstaller --name "DikeMapper_v0.0.1.exe" --onefile --noconsole DikeMapper.py
+'''

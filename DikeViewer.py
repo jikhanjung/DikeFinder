@@ -28,7 +28,7 @@ def debug_print(message, level=1):
     level 1: Normal debugging (function calls, basic operations)
     level 2: Verbose debugging (detailed operation info)
     """
-    if DikeFinderApp.DEBUG_MODE >= level:
+    if DikeViewerApp.DEBUG_MODE >= level:
         print(message)
 
 class DikeTableModel(QAbstractTableModel):
@@ -999,7 +999,7 @@ if WEB_ENGINE_AVAILABLE:
             self.layout = QVBoxLayout(self.central_widget)
             
             # Settings for credential storage
-            self.settings = QSettings("DikeFinder", "KIGAMMap")
+            self.settings = QSettings("DikeViewer", "KIGAMMap")
             
             # Add login controls
             login_layout = QHBoxLayout()
@@ -2419,13 +2419,13 @@ if WEB_ENGINE_AVAILABLE:
                 self.statusBar().showMessage(f"Map clicked at: {lat_formatted}, {lng_formatted}", 3000)
 
 
-class DikeFinderApp(QMainWindow):
+class DikeViewerApp(QMainWindow):
     # Class-level debug flag
     DEBUG_MODE = 0  # Default: no debugging (0), Basic (1), Verbose (2)
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DikeFinder")
+        self.setWindowTitle("DikeViewer v0.0.2")
         self.setGeometry(100, 100, 1200, 800)
         
         # Create status bar
@@ -2452,10 +2452,10 @@ class DikeFinderApp(QMainWindow):
         button_layout.addWidget(self.load_excel_button)
         
         # Add KIGAM map button
-        self.kigam_map_button = QPushButton("KIGAM Map")
-        self.kigam_map_button.setToolTip("Open KIGAM geological map in new window")
-        self.kigam_map_button.clicked.connect(self.open_kigam_map)
-        button_layout.addWidget(self.kigam_map_button)
+        #self.kigam_map_button = QPushButton("KIGAM Map")
+        #self.kigam_map_button.setToolTip("Open KIGAM geological map in new window")
+        #self.kigam_map_button.clicked.connect(self.open_kigam_map)
+        #button_layout.addWidget(self.kigam_map_button)
         
         # Add center checkbox control
         self.center_checkbox = QCheckBox("Center clicked row")
@@ -2540,10 +2540,10 @@ class DikeFinderApp(QMainWindow):
     def toggle_verbose_mode(self, state):
         """Toggle verbose mode on/off"""
         if state == Qt.Checked:
-            DikeFinderApp.DEBUG_MODE = 2
+            DikeViewerApp.DEBUG_MODE = 2
             debug_print("Verbose mode enabled", 0)
         else:
-            DikeFinderApp.DEBUG_MODE = 0
+            DikeViewerApp.DEBUG_MODE = 0
             debug_print("Verbose mode disabled", 0)
 
     def set_default_image_directory(self):
@@ -2951,7 +2951,7 @@ class SequentialNumberProxyModel(QSortFilterProxyModel):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = DikeFinderApp()
+    window = DikeViewerApp()
     window.show()
     sys.exit(app.exec_()) 
 
@@ -2959,7 +2959,7 @@ if __name__ == "__main__":
 ''' 
 How to make an exe file
 
-pyinstaller --name "DikeFinder_v0.0.2.exe" --onefile --noconsole main.py
+pyinstaller --name "DikeViewer_v0.0.2.exe" --onefile --noconsole DikeViewer.py
 pyinstaller --onedir --noconsole --add-data "icons/*.png;icons" --add-data "translations/*.qm;translations" --add-data "migrations/*;migrations" --icon="icons/Modan2_2.png" --noconfirm Modan2.py
 #--upx-dir=/path/to/upx
 
