@@ -1786,65 +1786,48 @@ if WEB_ENGINE_AVAILABLE:
             try:
                 # Decode the result from JSON
                 data = json.loads(result)
-                debug_print(f"Received coordinate polling result: {data}", 2)
+                debug_print(f"Received coordinate polling result: {data}", 0)
                 
                 # If we have raw coordinates, update the raw coordinate display
-                if 'raw_x' in data and 'raw_y' in data:
-                    self.update_raw_coordinates(data['raw_x'], data['raw_y'], data.get('projection', ''))
+                if 'raw' in data :
+
+                    self.previous_raw_x = self.current_raw_x
+                    self.previous_raw_y = self.current_raw_y
+                    self.previous_lat = self.current_lat if hasattr(self, 'current_lat') else None
+                    self.previous_lng = self.current_lng if hasattr(self, 'current_lng') else None
+
+                    self.current_raw_x = data['raw'][0]
+                    self.current_raw_y = data['raw'][1]
+                    self.current_projection = data.get('projection', '')
+                    self.current_lat = data['lat']
+                    self.current_lng = data['lng']
+                    #self.update_raw_coordinates(data['raw'], data.get('projection', ''))
+    
+
+                    # Calculate the distance
+                    self.wgs_distance, self.wgs_angle = self.calculate_wgs84_distance(
+                        self.previous_lat, self.previous_lng,
+                        self.current_lat, self.current_lng
+                    )
+                        
+                    debug_print(f"Calculated WGS84 distance: {self.wgs_distance} meters", 0)
+                                    
+                    self.current_angle_measurement = f"{self.wgs_angle:.1f}"
+                    self.current_distance_measurement = f"{self.wgs_distance:.1f}"
+                                        
+                    debug_print(f"Distance measurement: {self.current_distance_measurement} m at {self.current_angle_measurement}°", 0)
                     
-                    # Store the coordinates for use in distance measurements
-                    if hasattr(self, 'current_raw_x') and hasattr(self, 'current_raw_y'):
-                        if not hasattr(self, 'previous_raw_x') or not hasattr(self, 'previous_raw_y'):
-                            # First point in measurement
-                            self.previous_raw_x = self.current_raw_x
-                            self.previous_raw_y = self.current_raw_y
-                            self.previous_lat = self.current_lat if hasattr(self, 'current_lat') else None
-                            self.previous_lng = self.current_lng if hasattr(self, 'current_lng') else None
-                        else:
-                            # Calculate distance if we have WGS84 coordinates for both points
-                            if (hasattr(self, 'previous_lat') and hasattr(self, 'previous_lng') and 
-                                hasattr(self, 'current_lat') and hasattr(self, 'current_lng')):
-                                
-                                # Only calculate if all coordinates are valid
-                                if (self.previous_lat is not None and self.previous_lng is not None and 
-                                    self.current_lat is not None and self.current_lng is not None):
-                                    
-                                    # Calculate the distance
-                                    self.wgs_distance = self.calculate_wgs84_distance(
-                                        self.previous_lat, self.previous_lng,
-                                        self.current_lat, self.current_lng
-                                    )
-                                    
-                                    debug_print(f"Calculated WGS84 distance: {self.wgs_distance} meters", 0)
-                                    
-                                    # If we're in distance measuring mode, update the display
-                                    if hasattr(self, 'distance_tool_active') and self.distance_tool_active:
-                                        # Calculate angle between points
-                                        dx = self.current_raw_x - self.previous_raw_x
-                                        dy = self.current_raw_y - self.previous_raw_y
-                                        angle = math.degrees(math.atan2(dy, dx))
-                                        # Ensure angle is in 0-360 range
-                                        angle = (angle + 360) % 360
-                                        
-                                        self.current_angle_measurement = f"{angle:.1f}"
-                                        self.current_distance_measurement = f"{self.wgs_distance:.1f}"
-                                        
-                                        debug_print(f"Distance measurement: {self.current_distance_measurement} m at {self.current_angle_measurement}°", 0)
-                                        
-                                        # Update measurement display
-                                        measurement_text = f"Distance: {self.current_distance_measurement} m | Angle: {self.current_angle_measurement}°"
-                                        self.measurement_label.setText(measurement_text)
-                                        self.measurement_label.setStyleSheet("background-color: rgba(220, 220, 255, 240); padding: 2px; border-radius: 3px;")
-                                        
-                                        # Flash the label
-                                        current_style = self.measurement_label.styleSheet()
-                                        self.measurement_label.setStyleSheet("background-color: rgba(200, 200, 255, 240); padding: 2px; border-radius: 3px;")
-                                        QTimer.singleShot(300, lambda: self.measurement_label.setStyleSheet(current_style))
+                    # Update measurement display
+                    measurement_text = f"Distance: {self.current_distance_measurement} m | Angle: {self.current_angle_measurement}°"
+                    self.measurement_label.setText(measurement_text)
+                    self.measurement_label.setStyleSheet("background-color: rgba(220, 220, 255, 240); padding: 2px; border-radius: 3px;")
+                    
+                    # Flash the label
+                    current_style = self.measurement_label.styleSheet()
+                    self.measurement_label.setStyleSheet("background-color: rgba(200, 200, 255, 240); padding: 2px; border-radius: 3px;")
+                    QTimer.singleShot(300, lambda: self.measurement_label.setStyleSheet(current_style))
                                         
                 
-                # If we have WGS84 coordinates, update the coordinate display
-                if 'lat' in data and 'lng' in data:
-                    self.update_coordinates(data['lat'], data['lng'])
                 
                 # Check for info popup content
                 if 'popup_content' in data and data['popup_content']:
@@ -1864,82 +1847,6 @@ if WEB_ENGINE_AVAILABLE:
                 import traceback
                 debug_print(traceback.format_exc(), 0)
         
-        def update_raw_coordinates(self, x, y, projection, coord_info=None):
-            """Update and store the raw map coordinates in their native format"""
-            debug_print(f"Raw coordinates: {x}, {y} in projection {projection}", 0)
-            
-            # Store the raw coordinates
-            self.current_raw_x = x
-            self.current_raw_y = y
-            self.current_projection = projection
-            
-            # Build the coordinate display string
-            coord_display = f"Map: X {x:.1f}, Y {y:.1f}"
-            
-            # Add WGS84 coordinates if available
-            if coord_info and 'lat' in coord_info and 'lng' in coord_info:
-                lat = coord_info['lat']
-                lng = coord_info['lng']
-                #distance = self.calculate_wgs84_distance(self.current_lat, self.current_lng, lat, lng)
-                #self.statusBar().showMessage(f"WGS84 distance: {distance:.2f} m", 3000)
-                #debug_print(f"WGS84 distance in update_raw_coordinates: {self.current_lat}, {self.current_lng} to {lat}, {lng} = {distance:.2f} m", 0)
-                self.previous_lat = self.current_lat
-                self.previous_lng = self.current_lng
-                self.current_lat = lat
-                self.current_lng = lng
-                coord_display += f" | WGS84: {lat:.4f}, {lng:.4f}"
-            
-            # Add distance if available (simplified display)
-            if hasattr(self, 'current_distance_measurement'):
-                coord_display += f" | Dist: {self.current_distance_measurement}m"
-            
-            # Add angle if available (simplified display)
-            if hasattr(self, 'current_angle_measurement'):
-                coord_display += f" | {self.current_angle_measurement}°"
-            
-            # Update the coordinate display with elided text if necessary
-            self.coords_label.setText(coord_display)
-            
-            # Flash the coordinate label briefly
-            current_style = self.coords_label.styleSheet()
-            self.coords_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 2px; border-radius: 3px;")
-            QTimer.singleShot(300, lambda: self.coords_label.setStyleSheet(current_style))
-            
-            self.statusBar().showMessage("Coordinates updated", 2000)
-            #self.handle_popup_info()
-        
-        def update_coordinates(self, lat, lng):
-            """Update the displayed WGS84 coordinates and store them"""
-            debug_print(f"WGS84 coordinates: Lat={lat}, Lng={lng}", 0)
-
-            # Round to 6 decimal places (approx. 10cm precision)
-            lat_formatted = round(float(lat), 6)
-            lng_formatted = round(float(lng), 6)
-
-            if hasattr(self, 'current_lat') and hasattr(self, 'current_lng'):
-                self.wgs_distance, self.wgs_angle = self.calculate_wgs84_distance(self.current_lat, self.current_lng, self.previous_lat, self.previous_lng)
-                self.statusBar().showMessage(f"WGS84 distance: {self.wgs_distance:.2f} m", 3000)
-                debug_print(f"WGS84 distance: {self.current_lat}, {self.current_lng} to {self.previous_lat}, {self.previous_lng} = {self.wgs_distance:.2f} m", 0)
-                self.current_distance_measurement = self.wgs_distance
-                self.current_angle_measurement = self.wgs_angle
-
-            # Store the coordinates
-            self.current_lat = lat_formatted
-            self.current_lng = lng_formatted
-            
-            # If we're already showing raw coordinates, don't overwrite the display
-            if not hasattr(self, 'current_raw_x'):
-                # Update the label with formatted coordinates
-                self.coord_label.setText(f"WGS84: {lat_formatted}, {lng_formatted}")
-                self.coord_label.setStyleSheet("background-color: rgba(200, 230, 255, 240); padding: 5px; border-radius: 3px; border: 1px solid blue;")
-                
-                # Flash the label to indicate new data
-                current_style = self.coord_label.styleSheet()
-                self.coord_label.setStyleSheet("background-color: rgba(120, 180, 255, 240); padding: 5px; border-radius: 3px; border: 2px solid blue;")
-                QTimer.singleShot(300, lambda: self.coord_label.setStyleSheet(current_style))
-                
-                self.statusBar().showMessage(f"Map clicked at: {lat_formatted}, {lng_formatted}", 3000)
-
         def activate_distance_tool(self, checked):
             """Activate the distance measurement tool on the map"""
             # Update the distance tool state
@@ -2029,6 +1936,7 @@ if WEB_ENGINE_AVAILABLE:
                         startPoint: null
                     };
                     if (window._distanceButton) {
+                        window._distanceButton.click();
                         window._distanceButton.classList.remove('active');
                         console.log('Removed active class from distance button');
                     }
