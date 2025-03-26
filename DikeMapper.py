@@ -157,9 +157,11 @@ if WEB_ENGINE_AVAILABLE:
             self.measurement_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Allow horizontal stretching
             
             # Add coordinate display with fixed width
-            self.coords_label = QLabel("Coordinates: ")
-            self.coords_label.setMinimumWidth(200)  # Reduced minimum width
-            self.coords_label.setMaximumWidth(300)  # Reduced maximum width
+            self.coords_label1 = QLabel("Coord1: ")
+            self.coords_label1.setMinimumWidth(200)  # Reduced minimum width
+            self.coords_label2 = QLabel("Coord2: ")
+            self.coords_label2.setMinimumWidth(200)  # Reduced minimum width
+            #self.coords_label.setMaximumWidth(300)  # Reduced maximum width
             
             # Create a QHBoxLayout for the tools and set size constraints
             tools_layout.setSizeConstraint(QLayout.SetFixedSize)  # Prevent layout from expanding
@@ -169,7 +171,8 @@ if WEB_ENGINE_AVAILABLE:
             tools_layout.addWidget(self.distance_button)
             tools_layout.addWidget(self.geo_info_label, 2)  # Stretch factor of 2
             tools_layout.addWidget(self.measurement_label, 1)  # Stretch factor of 1
-            tools_layout.addWidget(self.coords_label)
+            tools_layout.addWidget(self.coords_label1)
+            tools_layout.addWidget(self.coords_label2)
             tools_layout.addWidget(self.add_to_table_button)
             tools_layout.addStretch(1)  # Add stretch to push other widgets to the right
             
@@ -1440,20 +1443,28 @@ if WEB_ENGINE_AVAILABLE:
                 self.add_to_table_button.setStyleSheet("")
                 debug_print("Add to Table button disabled", 0)
         
-        def update_coordinates(self, lat, lng):
+        def update_coordinates(self):
             """Update the coordinate display with WGS84 coordinates"""
-            debug_print(f"Updating coordinates display: {lat}, {lng}", 0)
-            self.current_lat = lat
-            self.current_lng = lng
+            debug_print(f"Updating coordinates display", 0)
             
             # Format the coordinate display
-            self.coords_label.setText(f"Coordinates: Lat {lat:.6f}, Lng {lng:.6f}")
+            if self.current_lat is not None and self.current_lng is not None:
+                self.coords_label1.setText(f"Coord 1: Lat {self.current_lat:.6f}, Lng {self.current_lng:.6f}")      
+            else:
+                self.coords_label1.setText("Coord 1: N/A")
+            if self.previous_lat is not None and self.previous_lng is not None:
+                self.coords_label2.setText(f"Coord 2: Lat {self.previous_lat:.6f}, Lng {self.previous_lng:.6f}")
+            else:
+                self.coords_label2.setText("Coord 2: N/A")
             
             # Check if we have geological information to add to the table
             if self.current_geo_info:
                 self.add_to_table_button.setEnabled(True)
             
-            self.statusBar().showMessage(f"Coordinates updated: Lat {lat:.6f}, Lng {lng:.6f}", 2000)
+            if self.current_lat is not None and self.current_lng is not None and self.previous_lat is not None and self.previous_lng is not None:
+                self.statusBar().showMessage(f"Coords: {self.current_lat:.6f}, {self.current_lng:.6f} / {self.previous_lat:.6f}, {self.previous_lng:.6f}", 2000)
+            else:
+                self.statusBar().showMessage("No coords available.", 2000)
         
         def add_current_info_to_table(self):
             """Add current geological information to the table"""
@@ -1625,7 +1636,8 @@ if WEB_ENGINE_AVAILABLE:
                         (function() {
                             var distanceButton = document.querySelector('a.btn_distance, a.btn_distance.active');
                             if (distanceButton) {
-                                distanceButton.classList.remove('active');
+                                //distanceButton.classList.remove('active');
+                                distanceButton.click();
                                 console.log('Deactivated map distance button');
                             }
                         })();
@@ -1634,9 +1646,18 @@ if WEB_ENGINE_AVAILABLE:
                     )
                 
                 # Reset current info and measurements
+                self.current_lat = ModuleNotFoundError
+                self.current_lng = None
+                self.previous_lat = None
+                self.previous_lng = None
+                self.current_raw_x = None
+                self.current_raw_y = None
+                self.previous_raw_x = None
+                self.previous_raw_y = None
                 self.current_geo_info = None
                 self.current_distance_measurement = None
                 self.current_angle_measurement = None
+                self.update_coordinates()
                 self.add_to_table_button.setEnabled(False)
                 
             else:
@@ -1770,7 +1791,7 @@ if WEB_ENGINE_AVAILABLE:
 
             distance = geodesic(point_a, point_b).meters
             # calculate angle
-            angle = math.atan2(lat1 - lat2, lon1 - lon2)
+            angle = math.atan2(lat2 - lat1, lon2 - lon1)
             angle = math.degrees(angle)
             angle = 90 - angle
             if angle < 0:
@@ -1801,6 +1822,7 @@ if WEB_ENGINE_AVAILABLE:
                     self.current_projection = data.get('projection', '')
                     self.current_lat = data['lat']
                     self.current_lng = data['lng']
+                    self.update_coordinates()
                     #self.update_raw_coordinates(data['raw'], data.get('projection', ''))
     
 
