@@ -230,6 +230,8 @@ class ExcelConverterWindow(QDialog):
             return  # User canceled
         
         try:
+            # waitcursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
             # Read the Excel file
             self.df = pd.read_excel(file_name)
             column_header_text = "지역	기호	지층	대표암상	시대	각도	거리 (km)	주소	색	좌표 X	좌표 Y	사진 이름	코드1 좌표 Lat	코드 1 좌표 Lng"
@@ -424,6 +426,10 @@ class ExcelConverterWindow(QDialog):
             
             # Update the table with the new data
             self.update_table()
+
+            # restore cursor
+            QApplication.restoreOverrideCursor()
+
             self.save_button.setEnabled(True)
             #self.save_db_button.setEnabled(True)  # Enable database save button
             
@@ -432,6 +438,8 @@ class ExcelConverterWindow(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Error importing data: {str(e)}")
+            # restore cursor
+            QApplication.restoreOverrideCursor()
     
     def save_excel_file(self):
         if self.df is None:
@@ -457,13 +465,30 @@ class KIGAMMapWindow(QMainWindow):
     DEBUG_MODE = 0  # Default: no debugging (0), Basic (1), Verbose (2)
     
     def __init__(self, parent=None):
+        """Initialize the main window"""
         super().__init__(parent)
-        self.initUI()
-        self.init_database()
-        self.load_data_from_database()
         
-        # Restore window geometry
-        self.restore_window_geometry()
+        # Show wait cursor during initialization
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Initialize settings first
+            self.settings = QSettings(COMPANY_NAME, PROGRAM_NAME)
+            
+            # Initialize database
+            self.init_database()
+            
+            # Initialize UI
+            self.initUI()
+            
+            # Restore window geometry
+            self.restore_window_geometry()
+            
+            # Load saved credentials
+            self.load_saved_credentials()
+            
+        finally:
+            # Restore normal cursor
+            QApplication.restoreOverrideCursor()
         
     def initUI(self):
         # Initialize settings first
@@ -761,7 +786,7 @@ class KIGAMMapWindow(QMainWindow):
                 os.makedirs(backup_dir, exist_ok=True)
                 
                 # Generate today's backup filename
-                today = datetime.datetime.now().strftime('%Y%m%d')
+                today = datetime.datetime.now().strftime('%Y%m%d%H')
                 backup_filename = f"{PROGRAM_NAME.lower()}_{today}.db"
                 backup_path = os.path.join(backup_dir, backup_filename)
                 
@@ -3208,7 +3233,11 @@ class KIGAMMapWindow(QMainWindow):
             converter_window = ExcelConverterWindow(self)
             result = converter_window.exec_()
             if result == QDialog.Accepted:  # If dialog was accepted (not cancelled)
+                # waitcursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
                 self.load_data_from_database()  # Refresh the main window's table
+                # restore cursor
+                QApplication.restoreOverrideCursor()
         except Exception as e:
             QMessageBox.critical(self, "Import Error", 
                 f"Error opening Excel converter: {str(e)}")
