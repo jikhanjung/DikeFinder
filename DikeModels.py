@@ -3,12 +3,14 @@ import datetime
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
 
-# Get the directory where this script is located
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'DikeMapper.db')
+# Get the directory of the current script
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Initialize the database
-db = SqliteExtDatabase(DB_PATH)
+# Default database path
+DB_PATH = os.path.join(SCRIPT_DIR, 'dikemapper.db')
+
+# Initialize the database with SQLite
+db = SqliteDatabase(None)  # Initialize without path
 
 class BaseModel(Model):
     class Meta:
@@ -33,8 +35,23 @@ class DikeRecord(BaseModel):
     lng_2 = FloatField(null=True)
     created_date = DateTimeField(default=datetime.datetime.now)
 
-def init_database():
-    """Initialize the database and create tables"""
+def init_database(custom_path=None):
+    """Initialize the database and create tables
+    
+    Args:
+        custom_path (str, optional): Custom path for the database file. 
+                                   If None, uses the default path.
+    """
+    global DB_PATH
+    
+    # Update DB_PATH if custom path is provided
+    if custom_path:
+        DB_PATH = custom_path
+    
+    # Initialize database with the path
+    db.init(DB_PATH)
+    
+    # Create tables
     db.connect()
     db.create_tables([DikeRecord], safe=True)
     db.close()

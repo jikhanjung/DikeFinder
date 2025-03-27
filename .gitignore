@@ -4,3 +4,4 @@ build/
 *.db
 *.db-journal
 *.pyc
+logs/

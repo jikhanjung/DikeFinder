@@ -5,20 +5,42 @@ import json
 import csv
 import re
 import math
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from pyproj import Transformer
 from geopy.distance import geodesic
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                             QTableWidget, QTableWidgetItem, QMessageBox, 
                             QFileDialog, QCheckBox, QHeaderView, QSizePolicy,
-                            QLayout, QSplitter)
+                            QLayout, QSplitter, QToolBar, QDialog)
 from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSignal, QTimer, QSettings
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 from PyQt5.QtGui import QIcon, QFont
-import pandas as pd
-import numpy as np
-from pyproj import Transformer
 from DikeModels import DikeRecord, init_database, db, DB_PATH
+import shutil
+
+# Company and program information
+COMPANY_NAME = "PaleoBytes"
+PROGRAM_NAME = "DikeMapper"
+PROGRAM_VERSION = "0.0.3"
+
+# Get user profile directory
+USER_PROFILE_DIRECTORY = os.path.expanduser('~')
+
+# Define directory structure
+DEFAULT_DB_DIRECTORY = os.path.join(USER_PROFILE_DIRECTORY, COMPANY_NAME, PROGRAM_NAME)
+DEFAULT_STORAGE_DIRECTORY = os.path.join(DEFAULT_DB_DIRECTORY, "data/")
+DEFAULT_LOG_DIRECTORY = os.path.join(DEFAULT_DB_DIRECTORY, "logs/")
+DB_BACKUP_DIRECTORY = os.path.join(DEFAULT_DB_DIRECTORY, "backups/")
+
+# Create necessary directories
+for directory in [DEFAULT_DB_DIRECTORY, DEFAULT_STORAGE_DIRECTORY, DEFAULT_LOG_DIRECTORY, DB_BACKUP_DIRECTORY]:
+    os.makedirs(directory, exist_ok=True)
 
 # Check if WebEngine is available
 try:
@@ -27,10 +49,408 @@ try:
 except ImportError:
     WEB_ENGINE_AVAILABLE = False
 
+# Set up logging
+def setup_logging():
+    """Set up logging configuration"""
+    # Create log file path with timestamp
+    log_file = os.path.join(DEFAULT_LOG_DIRECTORY, f'{PROGRAM_NAME.lower()}_{datetime.datetime.now().strftime("%Y%m%d")}.log')
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Set up file handler with rotation
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5*1024*1024,  # 5MB
+        backupCount=5
+    )
+    file_handler.setFormatter(formatter)
+    
+    # Set up console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # Log initial startup message
+    logging.info(f"{PROGRAM_NAME} started. Log file: {log_file}")
+    return log_file
+
+# Initialize logging
+LOG_FILE = setup_logging()
+
 def debug_print(message, level=1):
-    """Print debug messages based on debug level"""
+    """Print debug messages based on debug level and log them"""
     if KIGAMMapWindow.DEBUG_MODE >= level:
-        print(f"[DEBUG] {message}")
+        if level == 0:
+            logging.info(message)
+        else:
+            logging.debug(message)
+
+
+class ExcelConverterWindow(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.df = None
+        self.initUI()
+        
+    def initUI(self):
+        """Initialize the user interface"""
+        # Create main layout
+        main_layout = QVBoxLayout()
+        
+        # Create buttons
+        self.load_button = QPushButton('Load Excel File', self)
+        self.load_button.clicked.connect(self.load_excel_file)
+        
+        self.save_button = QPushButton('Save to Database', self)
+        self.save_button.clicked.connect(self.save_to_database)
+        self.save_button.setEnabled(False)  # Initially disabled
+        
+        # Create table widget
+        self.table_widget = QTableWidget(self)
+        self.table_widget.setColumnCount(0)
+        self.table_widget.setRowCount(0)
+        
+        # Add widgets to layout
+        main_layout.addWidget(self.load_button)
+        main_layout.addWidget(self.table_widget)
+        main_layout.addWidget(self.save_button)
+        
+        # Set the layout
+        self.setLayout(main_layout)
+        
+        # Set window properties
+        self.setWindowTitle('Excel Data Converter')
+        self.resize(800, 600)
+    
+    def update_table(self):
+        if self.df is None:
+            return
+            
+        # Set table dimensions
+        self.table_widget.setRowCount(len(self.df))
+        self.table_widget.setColumnCount(len(self.df.columns))
+        
+        # Set headers
+        self.table_widget.setHorizontalHeaderLabels(self.df.columns)
+        
+        # Fill data
+        for i in range(len(self.df)):
+            for j in range(len(self.df.columns)):
+                val = self.df.iloc[i, j]
+                if pd.isna(val):
+                    item = QTableWidgetItem('')
+                else:
+                    if isinstance(val, (float, np.float64)):
+                        item = QTableWidgetItem(f'{val:.6f}')
+                    else:
+                        item = QTableWidgetItem(str(val))
+                self.table_widget.setItem(i, j, item)
+        
+        # Adjust column widths
+        self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+    def save_to_database(self):
+        """Save the processed data to the database"""
+        if self.df is None:
+            QMessageBox.warning(self, "No Data", "Please load an Excel file first.")
+            return
+            
+        try:
+            # Map Excel columns to database fields
+            column_mapping = {
+                '기호': 'symbol',
+                '지층': 'stratum',
+                '대표암상': 'rock_type',
+                '시대': 'era',
+                '도폭': 'map_sheet',
+                '주소': 'address',
+                '거리 (km)': 'distance',
+                '각도': 'angle',
+                'X_3857': 'x_coord_1',
+                'Y_3857': 'y_coord_1',
+                'Calculated_Lat': 'lat_1',
+                'Calculated_Lng': 'lng_1'
+            }
+            required_column = ['거리 (km)', '각도', 'X_3857', 'Y_3857']
+            for idx, row in self.df.iterrows():
+                if row[required_column].isna().all():
+                    self.df = self.df.drop(idx)
+            
+            # Convert distance from km to meters
+            if '거리 (km)' in self.df.columns:
+                self.df['거리 (km)'] = self.df['거리 (km)'] * 1000
+
+            # Fix angle calculation
+            if '각도' in self.df.columns:
+                # Apply the angle transformation row by row
+                self.df['각도'] = self.df['각도'].apply(lambda x: (90 - x + 360) % 360 if pd.notnull(x) else x)
+
+            # Create records for each row
+            records = []
+            for _, row in self.df.iterrows():
+                record_data = {}
+                for excel_col, db_field in column_mapping.items():
+                    if excel_col in self.df.columns:
+                        value = row[excel_col]
+                        # Convert NaN to None for database
+                        if pd.isna(value):
+                            value = None
+                        record_data[db_field] = value
+                
+                records.append(DikeRecord(**record_data))
+            
+            # Bulk insert records
+            DikeRecord.bulk_create(records)
+            
+            QMessageBox.information(self, "Database Save Complete", 
+                f"Successfully saved {len(records)} records to the database.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Database Save Error", 
+                f"Error saving to database: {str(e)}")
+            
+        self.accept()
+
+    def load_excel_file(self):
+        """Import data from an Excel file"""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Import Geological Data", "", "Excel Files (*.xlsx);;All Files (*)"
+        )
+        
+        if not file_name:
+            return  # User canceled
+        
+        try:
+            # Read the Excel file
+            self.df = pd.read_excel(file_name)
+            column_header_text = "지역	기호	지층	대표암상	시대	각도	거리 (km)	주소	색	좌표 X	좌표 Y	사진 이름	코드1 좌표 Lat	코드 1 좌표 Lng"
+            column_header_list = column_header_text.split('\t')
+            
+            # Define column names
+            image_col = '사진 이름'
+            x_col = '좌표 X'
+            y_col = '좌표 Y'
+            lat_col = '코드1 좌표 Lat'
+            lng_col = '코드 1 좌표 Lng'
+            
+            # Add new columns for calculated coordinates
+            self.df['X_3857'] = np.nan
+            self.df['Y_3857'] = np.nan
+            self.df['Calculated_Lat'] = np.nan
+            self.df['Calculated_Lng'] = np.nan
+            self.df['Pixel_X'] = np.nan
+            self.df['Pixel_Y'] = np.nan
+            self.df['Pixel_Y_Flipped'] = np.nan
+            
+            # Copy existing lat/lng values to calculated columns
+            self.df.loc[self.df[lat_col].notna(), 'Calculated_Lat'] = self.df[lat_col]
+            self.df.loc[self.df[lng_col].notna(), 'Calculated_Lng'] = self.df[lng_col]
+            
+            # Create a transformer from WGS84 (EPSG:4326) to Web Mercator (EPSG:3857)
+            transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+            transformer_back = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+            
+            # Convert coordinate columns to float, replacing any non-numeric values with NaN
+            for col in [x_col, y_col, lat_col, lng_col]:
+                self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
+            
+            # Constants for coordinate conversion
+            CM_TO_INCH = 0.393701  # 1 cm = 0.393701 inches
+            DPI = 96  # dots per inch
+            
+            # Process each image group
+            image_groups = self.df.groupby(image_col)
+            
+            # Store transformation parameters for each image
+            image_transforms = {}
+            
+            # First pass: Calculate transformation parameters for each image
+            for image_name, group_df in image_groups:
+                print(f"\nProcessing image: {image_name}")
+                print(f"Number of rows: {len(group_df)}")
+                
+                # Get rows with lat/lng coordinates
+                known_coords = group_df[group_df[lat_col].notna() & group_df[lng_col].notna()]
+                
+                if len(known_coords) >= 2:
+                    print(f"Found {len(known_coords)} rows with known coordinates")
+                    
+                    # Lists to store coordinates
+                    x_pixels = []
+                    y_pixels = []
+                    x_3857_coords = []
+                    y_3857_coords = []
+                    max_y = float('-inf')
+                    
+                    # First pass to find maximum y value
+                    for _, row in known_coords.iterrows():
+                        y_cm = row[y_col]
+                        if pd.notna(y_cm):
+                            if isinstance(y_cm, float):
+                                y_val = round(y_cm * CM_TO_INCH * DPI)
+                            else:
+                                y_val = y_cm
+                            max_y = max(max_y, y_val)
+                    
+                    # Process known coordinates
+                    for _, row in known_coords.iterrows():
+                        try:
+                            # Convert cm to pixels if the coordinates are floats
+                            x_cm, y_cm = row[x_col], row[y_col]
+                            if isinstance(x_cm, float) and isinstance(y_cm, float):
+                                x_val = round(x_cm * CM_TO_INCH * DPI)
+                                y_val = round(y_cm * CM_TO_INCH * DPI)
+                            else:
+                                x_val = x_cm
+                                y_val = y_cm
+                            
+                            # Store pixel coordinates
+                            self.df.at[row.name, 'Pixel_X'] = x_val
+                            self.df.at[row.name, 'Pixel_Y'] = y_val
+                            
+                            # Invert y coordinate
+                            y_val_flipped = max_y - y_val
+                            self.df.at[row.name, 'Pixel_Y_Flipped'] = y_val_flipped
+                            
+                            # Transform lat/lng to EPSG:3857
+                            x_3857, y_3857 = transformer.transform(row[lng_col], row[lat_col])
+                            self.df.at[row.name, 'X_3857'] = x_3857
+                            self.df.at[row.name, 'Y_3857'] = y_3857
+                            
+                            x_pixels.append(x_val)
+                            y_pixels.append(y_val_flipped)
+                            x_3857_coords.append(x_3857)
+                            y_3857_coords.append(y_3857)
+                            
+                        except Exception as e:
+                            print(f"Error transforming coordinates for row {row.name}: {str(e)}")
+                            continue
+                    
+                    if len(x_pixels) >= 2:
+                        # Convert to numpy arrays
+                        x_pixels = np.array(x_pixels)
+                        y_pixels = np.array(y_pixels)
+                        x_3857_coords = np.array(x_3857_coords)
+                        y_3857_coords = np.array(y_3857_coords)
+                        
+                        try:
+                            # Calculate x transformation (simple linear regression)
+                            A_x = np.vstack([x_pixels, np.ones(len(x_pixels))]).T
+                            x_slope, x_intercept = np.linalg.lstsq(A_x, x_3857_coords, rcond=None)[0]
+                            
+                            # Calculate y transformation (simple linear regression)
+                            A_y = np.vstack([y_pixels, np.ones(len(y_pixels))]).T
+                            y_slope, y_intercept = np.linalg.lstsq(A_y, y_3857_coords, rcond=None)[0]
+                            
+                            # Store transformation parameters
+                            image_transforms[image_name] = {
+                                'max_y': max_y,
+                                'x_slope': x_slope,
+                                'x_intercept': x_intercept,
+                                'y_slope': y_slope,
+                                'y_intercept': y_intercept
+                            }
+                            
+                            print(f"\nTransformation parameters for {image_name}:")
+                            print(f"X_3857 = {x_slope:.6f} * x_pixel + {x_intercept:.6f}")
+                            print(f"Y_3857 = {y_slope:.6f} * y_pixel + {y_intercept:.6f}")
+                            
+                        except np.linalg.LinAlgError as e:
+                            print(f"Error calculating transformation for {image_name}: {str(e)}")
+                    else:
+                        print(f"Not enough valid coordinates for {image_name}")
+                else:
+                    print(f"Not enough known coordinates for {image_name}")
+            
+            # Second pass: Calculate coordinates for all rows
+            print("\nCalculating coordinates for all rows...")
+            
+            for idx, row in self.df.iterrows():
+                image_name = row[image_col]
+                transform = image_transforms.get(image_name)
+                
+                if transform is None:
+                    print(f"No transformation available for image {image_name}")
+                    continue
+                
+                try:
+                    # Convert coordinates
+                    x_cm, y_cm = row[x_col], row[y_col]
+                    if pd.notna(x_cm) and pd.notna(y_cm):
+                        if isinstance(x_cm, float) and isinstance(y_cm, float):
+                            x_val = round(x_cm * CM_TO_INCH * DPI)
+                            y_val = round(y_cm * CM_TO_INCH * DPI)
+                        else:
+                            x_val = x_cm
+                            y_val = y_cm
+                        
+                        # Store pixel coordinates if not already stored
+                        if pd.isna(self.df.at[idx, 'Pixel_X']):
+                            self.df.at[idx, 'Pixel_X'] = x_val
+                            self.df.at[idx, 'Pixel_Y'] = y_val
+                        
+                        # Invert y coordinate
+                        y_val_flipped = transform['max_y'] - y_val
+                        if pd.isna(self.df.at[idx, 'Pixel_Y_Flipped']):
+                            self.df.at[idx, 'Pixel_Y_Flipped'] = y_val_flipped
+                        
+                        # Calculate EPSG:3857 coordinates
+                        x_3857 = transform['x_slope'] * x_val + transform['x_intercept']
+                        y_3857 = transform['y_slope'] * y_val_flipped + transform['y_intercept']
+                        
+                        # Store EPSG:3857 coordinates if not already stored
+                        if pd.isna(self.df.at[idx, 'X_3857']):
+                            self.df.at[idx, 'X_3857'] = x_3857
+                            self.df.at[idx, 'Y_3857'] = y_3857
+                        
+                        # Calculate and store WGS84 coordinates if not already present
+                        if pd.isna(row[lat_col]) or pd.isna(row[lng_col]):
+                            lng, lat = transformer_back.transform(x_3857, y_3857)
+                            self.df.at[idx, 'Calculated_Lat'] = lat
+                            self.df.at[idx, 'Calculated_Lng'] = lng
+                        
+                except Exception as e:
+                    print(f"Error processing row {idx}: {str(e)}")
+                    continue
+            
+            # Update the table with the new data
+            self.update_table()
+            self.save_button.setEnabled(True)
+            #self.save_db_button.setEnabled(True)  # Enable database save button
+            
+            QMessageBox.information(self, "Import Complete", 
+                "Data has been loaded and coordinates calculated successfully.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Error importing data: {str(e)}")
+    
+    def save_excel_file(self):
+        if self.df is None:
+            return
+            
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Save Excel File", "", "Excel Files (*.xlsx);;All Files (*)"
+        )
+        
+        if not file_name:
+            return  # User canceled
+            
+        try:
+            # Save the DataFrame to Excel
+            self.df.to_excel(file_name, index=False)
+            QMessageBox.information(self, "Save Complete", 
+                f"Data has been saved to:\n{file_name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Error saving file: {str(e)}")
 
 class KIGAMMapWindow(QMainWindow):
     """A window to display the geological map from KIGAM website"""
@@ -50,20 +470,24 @@ class KIGAMMapWindow(QMainWindow):
         self.settings = QSettings("PaleoBytes", "DikeMapper")
         
         # Set window title
-        self.setWindowTitle("DikeMapper v0.0.2 - KIGAM Geological Map")
+        self.setWindowTitle(f"{PROGRAM_NAME} v{PROGRAM_VERSION} - KIGAM Geological Map")
         
         # Set default size if no saved geometry exists
         default_geometry = self.settings.value("window_geometry")
         if not default_geometry:
             self.setGeometry(200, 200, 1000, 800)
         
-        # Initialize database
-        self.init_database()
-        
         # Create central widget and layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
+        
+        # Create toolbar
+        self.toolbar = QToolBar()
+        self.addToolBar(self.toolbar)
+        
+        # Initialize database
+        self.init_database()
         
         # Map view position and zoom storage
         self.current_map_center = None
@@ -78,7 +502,7 @@ class KIGAMMapWindow(QMainWindow):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
         self.remember_me = QCheckBox("Remember Me")
-        self.login_button = QPushButton("Login")
+        self.login_button = QPushButton("Login", self)
         self.login_button.clicked.connect(self.login_to_kigam)
         self.clear_credentials_button = QPushButton("Clear Saved")
         self.clear_credentials_button.clicked.connect(self.clear_saved_credentials)
@@ -222,20 +646,19 @@ class KIGAMMapWindow(QMainWindow):
         self.clear_table_button.setToolTip("Clear all rows from the table")
         self.clear_table_button.clicked.connect(self.clear_geo_table)
         
+        self.import_excel_button = QPushButton("Import Excel", self)
+        self.import_excel_button.clicked.connect(self.import_excel_file)
+        
         self.export_table_button = QPushButton("Export Table")
         self.export_table_button.setToolTip("Export the table data to a CSV file")
         self.export_table_button.clicked.connect(self.export_geo_table)
-
-        self.import_excel_button = QPushButton("Import Excel")
-        self.import_excel_button.setToolTip("Import data from Excel")
-        #self.import_excel_button.clicked.connect(self.import_excel_file)
 
         table_controls_layout.addWidget(self.add_to_table_button)
         table_controls_layout.addWidget(self.delete_row_button)
         table_controls_layout.addWidget(self.center_selected_button)
         table_controls_layout.addWidget(self.clear_table_button)
-        table_controls_layout.addWidget(self.export_table_button)
         table_controls_layout.addWidget(self.import_excel_button)
+        table_controls_layout.addWidget(self.export_table_button)
         
         self.table_layout.addLayout(table_controls_layout)
         
@@ -322,8 +745,53 @@ class KIGAMMapWindow(QMainWindow):
     
     def init_database(self):
         """Initialize the database"""
-        init_database()
+        global DB_PATH
         
+        try:
+            # Set default database path
+            DB_PATH = os.path.join(DEFAULT_DB_DIRECTORY, f"{PROGRAM_NAME.lower()}.db")
+            
+            # Create database directory if it doesn't exist
+            os.makedirs(DEFAULT_DB_DIRECTORY, exist_ok=True)
+            
+            # Check if database exists
+            if os.path.exists(DB_PATH):
+                # Create backup directory if it doesn't exist
+                backup_dir = os.path.join(DEFAULT_DB_DIRECTORY, 'backups')
+                os.makedirs(backup_dir, exist_ok=True)
+                
+                # Generate today's backup filename
+                today = datetime.datetime.now().strftime('%Y%m%d')
+                backup_filename = f"{PROGRAM_NAME.lower()}_{today}.db"
+                backup_path = os.path.join(backup_dir, backup_filename)
+                
+                # Check if today's backup exists
+                if not os.path.exists(backup_path):
+                    try:
+                        # Copy current database to backup
+                        shutil.copy2(DB_PATH, backup_path)
+                        logging.info(f"Created database backup: {backup_filename}")
+                    except Exception as e:
+                        logging.error(f"Failed to create database backup: {str(e)}")
+            
+            # Initialize the database
+            db.init(DB_PATH)
+            db.connect()
+            
+            # Create tables
+            db.create_tables([DikeRecord])
+            
+            # Close the connection
+            db.close()
+            
+            logging.info("Database initialized successfully")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error", 
+                f"Error initializing database: {str(e)}")
+            logging.error(f"Database initialization error: {str(e)}")
+            self.close()
+    
     def load_data_from_database(self):
         """Load data from the database into the table"""
         try:
@@ -2734,6 +3202,19 @@ class KIGAMMapWindow(QMainWindow):
             self.restoreGeometry(geometry)
             debug_print("Restored window geometry", 0)
 
+    def import_excel_file(self):
+        """Open ExcelConverterWindow for importing Excel data"""
+        try:
+            converter_window = ExcelConverterWindow(self)
+            result = converter_window.exec_()
+            if result == QDialog.Accepted:  # If dialog was accepted (not cancelled)
+                self.load_data_from_database()  # Refresh the main window's table
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", 
+                f"Error opening Excel converter: {str(e)}")
+            logging.error(f"Excel converter error: {str(e)}")
+
+
 # Main function to run the application as standalone
 def main():
     app = QApplication(sys.argv)
@@ -2758,5 +3239,5 @@ if __name__ == "__main__":
 
 
 '''
-pyinstaller --name "DikeMapper_v0.0.2.exe" --onefile --noconsole DikeMapper.py
+pyinstaller --name "DikeMapper_v0.0.3.exe" --onefile --noconsole DikeMapper.py
 '''

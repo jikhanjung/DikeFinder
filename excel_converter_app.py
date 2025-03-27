@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout
                             QFileDialog, QMessageBox, QHeaderView)
 from DikeModels import DikeRecord, init_database
 
-class ExcelConverterApp(QMainWindow):
+class ExcelConverterWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.df = None
@@ -365,7 +365,7 @@ class ExcelConverterApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    ex = ExcelConverterApp()
+    ex = ExcelConverterWindow()
     sys.exit(app.exec_())
 
 if __name__ == '__main__':
