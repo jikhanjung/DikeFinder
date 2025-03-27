@@ -171,7 +171,7 @@ class ExcelConverterWindow(QDialog):
                 '지층': 'stratum',
                 '대표암상': 'rock_type',
                 '시대': 'era',
-                '도폭': 'map_sheet',
+                '지역': 'map_sheet',
                 '주소': 'address',
                 '거리 (km)': 'distance',
                 '각도': 'angle',
