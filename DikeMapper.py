@@ -18,7 +18,7 @@ from PyQt5.QtGui import QIcon, QFont
 import pandas as pd
 import numpy as np
 from pyproj import Transformer
-from DikeModels import DikeRecord, init_database, db
+from DikeModels import DikeRecord, init_database, db, DB_PATH
 
 # Check if WebEngine is available
 try:
