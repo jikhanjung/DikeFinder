@@ -6,7 +6,7 @@ from pyproj import Transformer
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                             QHBoxLayout, QWidget, QTableWidget, QTableWidgetItem, 
                             QFileDialog, QMessageBox, QHeaderView)
-from DikeModels import GeologicalRecord, init_database
+from DikeModels import DikeRecord, init_database
 
 class ExcelConverterApp(QMainWindow):
     def __init__(self):
@@ -119,10 +119,10 @@ class ExcelConverterApp(QMainWindow):
                             value = None
                         record_data[db_field] = value
                 
-                records.append(GeologicalRecord(**record_data))
+                records.append(DikeRecord(**record_data))
             
             # Bulk insert records
-            GeologicalRecord.bulk_create(records)
+            DikeRecord.bulk_create(records)
             
             QMessageBox.information(self, "Database Save Complete", 
                 f"Successfully saved {len(records)} records to the database.")

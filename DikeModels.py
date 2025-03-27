@@ -5,7 +5,7 @@ from playhouse.sqlite_ext import SqliteExtDatabase
 
 # Get the directory where this script is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'geological_data.db')
+DB_PATH = os.path.join(BASE_DIR, 'DikeMapper.db')
 
 # Initialize the database
 db = SqliteExtDatabase(DB_PATH)
@@ -14,7 +14,7 @@ class BaseModel(Model):
     class Meta:
         database = db
 
-class GeologicalRecord(BaseModel):
+class DikeRecord(BaseModel):
     symbol = CharField(null=True)
     stratum = CharField(null=True)
     rock_type = CharField(null=True)
@@ -36,7 +36,7 @@ class GeologicalRecord(BaseModel):
 def init_database():
     """Initialize the database and create tables"""
     db.connect()
-    db.create_tables([GeologicalRecord], safe=True)
+    db.create_tables([DikeRecord], safe=True)
     db.close()
 
 def get_db():

@@ -18,7 +18,7 @@ from PyQt5.QtGui import QIcon, QFont
 import pandas as pd
 import numpy as np
 from pyproj import Transformer
-from DikeModels import GeologicalRecord, init_database, db
+from DikeModels import DikeRecord, init_database, db
 
 # Check if WebEngine is available
 try:
@@ -335,7 +335,7 @@ class KIGAMMapWindow(QMainWindow):
                 self.geo_table.setHorizontalHeaderLabels(headers)
             
             # Load records from database
-            records = GeologicalRecord.select().order_by(GeologicalRecord.created_date)
+            records = DikeRecord.select().order_by(DikeRecord.created_date)
             
             for record in records:
                 row = self.geo_table.rowCount()
@@ -1565,7 +1565,7 @@ class KIGAMMapWindow(QMainWindow):
                 if db.is_closed():
                     db.connect()
                 
-                record = GeologicalRecord.create(
+                record = DikeRecord.create(
                     symbol=info_dict.get('symbol', ''),
                     stratum=info_dict.get('stratum', ''),
                     rock_type=info_dict.get('rock_type', ''),
@@ -1659,8 +1659,9 @@ class KIGAMMapWindow(QMainWindow):
                 
                 # Clear the database
                 try:
-                    db.connect()
-                    GeologicalRecord.delete().execute()
+                    if db.is_closed():
+                        db.connect()
+                    DikeRecord.delete().execute()
                     debug_print("All records deleted from database", 0)
                 except Exception as e:
                     debug_print(f"Error clearing database: {str(e)}", 0)
@@ -2474,10 +2475,11 @@ class KIGAMMapWindow(QMainWindow):
             
         try:
             # Connect to the database
-            db.connect()
+            if db.is_closed():
+                db.connect()
             
             # Get the database records to delete
-            records = GeologicalRecord.select()
+            records = DikeRecord.select()
             
             # Process rows in reverse order to avoid changing indices during removal
             for row in reversed(selected_rows):
@@ -2493,14 +2495,14 @@ class KIGAMMapWindow(QMainWindow):
                 # Try to find and delete matching records from the database
                 query = records
                 if symbol:
-                    query = query.where(GeologicalRecord.symbol == symbol)
+                    query = query.where(DikeRecord.symbol == symbol)
                 if rock_type:
-                    query = query.where(GeologicalRecord.rock_type == rock_type)
+                    query = query.where(DikeRecord.rock_type == rock_type)
                 if x1 and y1:
                     try:
                         x1_val = float(x1)
                         y1_val = float(y1)
-                        query = query.where(GeologicalRecord.x_coord_1 == x1_val, GeologicalRecord.y_coord_1 == y1_val)
+                        query = query.where(DikeRecord.x_coord_1 == x1_val, DikeRecord.y_coord_1 == y1_val)
                     except (ValueError, TypeError):
                         pass
                         
@@ -2699,5 +2701,5 @@ if __name__ == "__main__":
 
 
 '''
-pyinstaller --name "DikeMapper_v0.0.1.exe" --onefile --noconsole DikeMapper.py
+pyinstaller --name "DikeMapper_v0.0.2.exe" --onefile --noconsole DikeMapper.py
 '''
