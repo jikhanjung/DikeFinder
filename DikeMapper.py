@@ -42,10 +42,20 @@ class KIGAMMapWindow(QMainWindow):
         self.init_database()
         self.load_data_from_database()
         
+        # Restore window geometry
+        self.restore_window_geometry()
+        
     def initUI(self):
-        # ... existing UI initialization code ...
+        # Initialize settings first
+        self.settings = QSettings("PaleoBytes", "DikeMapper")
+        
+        # Set window title
         self.setWindowTitle("DikeMapper v0.0.2 - KIGAM Geological Map")
-        self.setGeometry(200, 200, 1000, 800)
+        
+        # Set default size if no saved geometry exists
+        default_geometry = self.settings.value("window_geometry")
+        if not default_geometry:
+            self.setGeometry(200, 200, 1000, 800)
         
         # Initialize database
         self.init_database()
@@ -54,9 +64,6 @@ class KIGAMMapWindow(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        
-        # Settings for credential storage
-        self.settings = QSettings("PaleoBytes", "DikeMapper")
         
         # Map view position and zoom storage
         self.current_map_center = None
@@ -324,9 +331,9 @@ class KIGAMMapWindow(QMainWindow):
             self.geo_table.setRowCount(0)
             
             # Ensure we have enough columns for all data
-            if self.geo_table.columnCount() < 16:
-                self.geo_table.setColumnCount(16)
-                headers = ["기호 (Symbol)", "지층 (Stratum)", 
+            if self.geo_table.columnCount() < 17:  # Increased by 1 for ID column
+                self.geo_table.setColumnCount(17)
+                headers = ["ID", "기호 (Symbol)", "지층 (Stratum)", 
                            "대표암상 (Rock Type)", "시대 (Era)", 
                            "도폭 (Map Sheet)", "주소 (Address)",
                            "거리 (Distance)", "각도 (Angle)",
@@ -341,39 +348,79 @@ class KIGAMMapWindow(QMainWindow):
                 row = self.geo_table.rowCount()
                 self.geo_table.insertRow(row)
                 
+                # Add ID to table
+                self.geo_table.setItem(row, 0, QTableWidgetItem(str(record.id)))
+                
                 # Add basic information to table
-                self.geo_table.setItem(row, 0, QTableWidgetItem(str(record.symbol or "")))
-                self.geo_table.setItem(row, 1, QTableWidgetItem(str(record.stratum or "")))
-                self.geo_table.setItem(row, 2, QTableWidgetItem(str(record.rock_type or "")))
-                self.geo_table.setItem(row, 3, QTableWidgetItem(str(record.era or "")))
-                self.geo_table.setItem(row, 4, QTableWidgetItem(str(record.map_sheet or "")))
-                self.geo_table.setItem(row, 5, QTableWidgetItem(str(record.address or "")))
+                self.geo_table.setItem(row, 1, QTableWidgetItem(record.symbol or ""))
+                self.geo_table.setItem(row, 2, QTableWidgetItem(record.stratum or ""))
+                self.geo_table.setItem(row, 3, QTableWidgetItem(record.rock_type or ""))
+                self.geo_table.setItem(row, 4, QTableWidgetItem(record.era or ""))
+                self.geo_table.setItem(row, 5, QTableWidgetItem(record.map_sheet or ""))
+                self.geo_table.setItem(row, 6, QTableWidgetItem(record.address or ""))
                 
                 # Add distance and angle if available
-                if record.distance is not None and isinstance(record.distance, (int, float)):
-                    self.geo_table.setItem(row, 6, QTableWidgetItem(f"{float(record.distance):.1f}m"))
-                if record.angle is not None and isinstance(record.angle, (int, float)):
-                    self.geo_table.setItem(row, 7, QTableWidgetItem(f"{float(record.angle):.1f}°"))
+                try:
+                    if record.distance is not None:
+                        self.geo_table.setItem(row, 7, QTableWidgetItem(f"{float(record.distance):.1f}m"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 7, QTableWidgetItem(""))
+                    
+                try:
+                    if record.angle is not None:
+                        self.geo_table.setItem(row, 8, QTableWidgetItem(f"{float(record.angle):.1f}°"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 8, QTableWidgetItem(""))
                 
                 # Add first set of coordinates (X1, Y1, Lat1, Lng1)
-                if record.x_coord_1 is not None and isinstance(record.x_coord_1, (int, float)):
-                    self.geo_table.setItem(row, 8, QTableWidgetItem(f"{float(record.x_coord_1):.3f}"))
-                if record.y_coord_1 is not None and isinstance(record.y_coord_1, (int, float)):
-                    self.geo_table.setItem(row, 9, QTableWidgetItem(f"{float(record.y_coord_1):.3f}"))
-                if record.lat_1 is not None and isinstance(record.lat_1, (int, float)):
-                    self.geo_table.setItem(row, 10, QTableWidgetItem(f"{float(record.lat_1):.6f}"))
-                if record.lng_1 is not None and isinstance(record.lng_1, (int, float)):
-                    self.geo_table.setItem(row, 11, QTableWidgetItem(f"{float(record.lng_1):.6f}"))
+                try:
+                    if record.x_coord_1 is not None:
+                        self.geo_table.setItem(row, 9, QTableWidgetItem(f"{float(record.x_coord_1):.3f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 9, QTableWidgetItem(""))
+                    
+                try:
+                    if record.y_coord_1 is not None:
+                        self.geo_table.setItem(row, 10, QTableWidgetItem(f"{float(record.y_coord_1):.3f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 10, QTableWidgetItem(""))
+                    
+                try:
+                    if record.lat_1 is not None:
+                        self.geo_table.setItem(row, 11, QTableWidgetItem(f"{float(record.lat_1):.6f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 11, QTableWidgetItem(""))
+                    
+                try:
+                    if record.lng_1 is not None:
+                        self.geo_table.setItem(row, 12, QTableWidgetItem(f"{float(record.lng_1):.6f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 12, QTableWidgetItem(""))
                 
                 # Add second set of coordinates (X2, Y2, Lat2, Lng2)
-                if record.x_coord_2 is not None and isinstance(record.x_coord_2, (int, float)):
-                    self.geo_table.setItem(row, 12, QTableWidgetItem(f"{float(record.x_coord_2):.3f}"))
-                if record.y_coord_2 is not None and isinstance(record.y_coord_2, (int, float)):
-                    self.geo_table.setItem(row, 13, QTableWidgetItem(f"{float(record.y_coord_2):.3f}"))
-                if record.lat_2 is not None and isinstance(record.lat_2, (int, float)):
-                    self.geo_table.setItem(row, 14, QTableWidgetItem(f"{float(record.lat_2):.6f}"))
-                if record.lng_2 is not None and isinstance(record.lng_2, (int, float)):
-                    self.geo_table.setItem(row, 15, QTableWidgetItem(f"{float(record.lng_2):.6f}"))
+                try:
+                    if record.x_coord_2 is not None:
+                        self.geo_table.setItem(row, 13, QTableWidgetItem(f"{float(record.x_coord_2):.3f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 13, QTableWidgetItem(""))
+                    
+                try:
+                    if record.y_coord_2 is not None:
+                        self.geo_table.setItem(row, 14, QTableWidgetItem(f"{float(record.y_coord_2):.3f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 14, QTableWidgetItem(""))
+                    
+                try:
+                    if record.lat_2 is not None:
+                        self.geo_table.setItem(row, 15, QTableWidgetItem(f"{float(record.lat_2):.6f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 15, QTableWidgetItem(""))
+                    
+                try:
+                    if record.lng_2 is not None:
+                        self.geo_table.setItem(row, 16, QTableWidgetItem(f"{float(record.lng_2):.6f}"))
+                except (ValueError, TypeError):
+                    self.geo_table.setItem(row, 16, QTableWidgetItem(""))
             
             # Adjust column widths
             self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -1444,205 +1491,172 @@ class KIGAMMapWindow(QMainWindow):
         # Parse the information to extract fields
         info_dict = self.parse_geological_info(self.current_geo_info)
         
-        if info_dict:
-            # First, ensure we have enough columns
-            if self.geo_table.columnCount() < 16:  # We need 16 columns for all the data
-                self.geo_table.setColumnCount(16)
-                headers = ["기호 (Symbol)", "지층 (Stratum)", 
-                           "대표암상 (Rock Type)", "시대 (Era)", 
-                           "도폭 (Map Sheet)", "주소 (Address)",
-                           "거리 (Distance)", "각도 (Angle)",
-                           "X 좌표 1", "Y 좌표 1", "위도 (Latitude) 1", "경도 (Longitude) 1",
-                           "X 좌표 2", "Y 좌표 2", "위도 (Latitude) 2", "경도 (Longitude) 2"]
-                self.geo_table.setHorizontalHeaderLabels(headers)
+        if not info_dict:
+            QMessageBox.warning(self, "Parse Error", "Could not parse geological information")
+            return
             
-            # Add a new row to the table
-            row_position = self.geo_table.rowCount()
-            self.geo_table.insertRow(row_position)
-            
-            # Debug print current values
-            debug_print(f"Adding to table - Row position: {row_position}", 0)
-            debug_print(f"Symbol: {info_dict.get('symbol', '')}", 0)
-            debug_print(f"Distance: {self.current_distance_measurement}", 0)
-            debug_print(f"Angle: {self.current_angle_measurement}", 0)
-            debug_print(f"Previous coords: {self.previous_raw_x}, {self.previous_raw_y}, {self.previous_lat}, {self.previous_lng}", 0)
-            debug_print(f"Current coords: {self.current_raw_x}, {self.current_raw_y}, {self.current_lat}, {self.current_lng}", 0)
-            
-            # Add the extracted information to the cells
-            self.geo_table.setItem(row_position, 0, QTableWidgetItem(info_dict.get('symbol', '')))
-            self.geo_table.setItem(row_position, 1, QTableWidgetItem(info_dict.get('stratum', '')))
-            self.geo_table.setItem(row_position, 2, QTableWidgetItem(info_dict.get('rock_type', '')))
-            self.geo_table.setItem(row_position, 3, QTableWidgetItem(info_dict.get('era', '')))
-            self.geo_table.setItem(row_position, 4, QTableWidgetItem(info_dict.get('map_sheet', '')))
-            self.geo_table.setItem(row_position, 5, QTableWidgetItem(info_dict.get('address', '')))
-            
+        try:
             # Extract numeric values for database storage
             distance_value = None
             angle_value = None
             
-            # Add distance and angle if available
+            # Convert distance and angle to float values
             if hasattr(self, 'current_distance_measurement') and self.current_distance_measurement is not None:
-                debug_print(f"Processing distance measurement: {self.current_distance_measurement}", 0)
-                self.geo_table.setItem(row_position, 6, QTableWidgetItem(f"{self.current_distance_measurement}m"))
-                debug_print(f"Added distance to table: {self.current_distance_measurement}m", 0)
-                
-                # Convert to float for database
                 try:
                     distance_value = float(self.current_distance_measurement)
                 except (ValueError, TypeError):
                     distance_value = None
-                
-                if hasattr(self, 'current_angle_measurement') and self.current_angle_measurement is not None:
-                    self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{self.current_angle_measurement}°"))
-                    debug_print(f"Added angle to table: {self.current_angle_measurement}°", 0)
                     
-                    # Convert to float for database
-                    try:
-                        angle_value = float(self.current_angle_measurement)
-                    except (ValueError, TypeError):
-                        angle_value = None
-            else:
-                debug_print("No distance measurement available", 0)
+            if hasattr(self, 'current_angle_measurement') and self.current_angle_measurement is not None:
+                try:
+                    angle_value = float(self.current_angle_measurement)
+                except (ValueError, TypeError):
+                    angle_value = None
             
-            # Add previous coordinates (X1, Y1, Lat1, Lng1) - starting at column 8
-            prev_x, prev_y, prev_lat, prev_lng = None, None, None, None
-            # trim the previous_raw_x and previous_raw_y to 3 decimal places
-            self.previous_raw_x = round(self.previous_raw_x, 3)
-            self.previous_raw_y = round(self.previous_raw_y, 3)
-            self.current_raw_x = round(self.current_raw_x, 3)
-            self.current_raw_y = round(self.current_raw_y, 3)
-            self.previous_lat = round(self.previous_lat, 6)
-            self.previous_lng = round(self.previous_lng, 6)
-            self.current_lat = round(self.current_lat, 6)
-            self.current_lng = round(self.current_lng, 6)
+            # Prepare coordinate values (rounded appropriately)
+            prev_x = round(float(self.previous_raw_x), 3) if hasattr(self, 'previous_raw_x') and self.previous_raw_x is not None else None
+            prev_y = round(float(self.previous_raw_y), 3) if hasattr(self, 'previous_raw_y') and self.previous_raw_y is not None else None
+            prev_lat = round(float(self.previous_lat), 6) if hasattr(self, 'previous_lat') and self.previous_lat is not None else None
+            prev_lng = round(float(self.previous_lng), 6) if hasattr(self, 'previous_lng') and self.previous_lng is not None else None
             
-            if hasattr(self, 'previous_raw_x') and self.previous_raw_x is not None:
-                self.geo_table.setItem(row_position, 8, QTableWidgetItem(str(self.previous_raw_x)))
-                debug_print(f"Added previous X: {self.previous_raw_x}", 0)
-                prev_x = float(self.previous_raw_x)
+            curr_x = round(float(self.current_raw_x), 3) if hasattr(self, 'current_raw_x') and self.current_raw_x is not None else None
+            curr_y = round(float(self.current_raw_y), 3) if hasattr(self, 'current_raw_y') and self.current_raw_y is not None else None
+            curr_lat = round(float(self.current_lat), 6) if hasattr(self, 'current_lat') and self.current_lat is not None else None
+            curr_lng = round(float(self.current_lng), 6) if hasattr(self, 'current_lng') and self.current_lng is not None else None
             
-            if hasattr(self, 'previous_raw_y') and self.previous_raw_y is not None:
-                self.geo_table.setItem(row_position, 9, QTableWidgetItem(str(self.previous_raw_y)))
-                debug_print(f"Added previous Y: {self.previous_raw_y}", 0)
-                prev_y = float(self.previous_raw_y)
+            # Validate required data
+            if not (prev_lat and prev_lng and curr_lat and curr_lng):
+                QMessageBox.warning(self, "Invalid Data", "Missing coordinate information")
+                return
             
-            if hasattr(self, 'previous_lat') and self.previous_lat is not None:
-                self.geo_table.setItem(row_position, 10, QTableWidgetItem(str(self.previous_lat)))
-                debug_print(f"Added previous Lat: {self.previous_lat}", 0)
-                prev_lat = float(self.previous_lat)
+            # Connect to database and create record
+            if db.is_closed():
+                db.connect()
             
-            if hasattr(self, 'previous_lng') and self.previous_lng is not None:
-                self.geo_table.setItem(row_position, 11, QTableWidgetItem(str(self.previous_lng)))
-                debug_print(f"Added previous Lng: {self.previous_lng}", 0)
-                prev_lng = float(self.previous_lng)
+            # Create database record
+            record = DikeRecord.create(
+                symbol=info_dict.get('symbol', ''),
+                stratum=info_dict.get('stratum', ''),
+                rock_type=info_dict.get('rock_type', ''),
+                era=info_dict.get('era', ''),
+                map_sheet=info_dict.get('map_sheet', ''),
+                address=info_dict.get('address', ''),
+                distance=distance_value,
+                angle=angle_value,
+                x_coord_1=prev_x,
+                y_coord_1=prev_y,
+                lat_1=prev_lat,
+                lng_1=prev_lng,
+                x_coord_2=curr_x,
+                y_coord_2=curr_y,
+                lat_2=curr_lat,
+                lng_2=curr_lng
+            )
             
-            # Add current coordinates (X2, Y2, Lat2, Lng2) - starting at column 12
-            curr_x, curr_y, curr_lat, curr_lng = None, None, None, None
+            debug_print(f"Created database record with ID: {record.id}", 0)
             
-            if hasattr(self, 'current_raw_x') and self.current_raw_x is not None:
-                self.geo_table.setItem(row_position, 12, QTableWidgetItem(str(self.current_raw_x)))
-                debug_print(f"Added current X: {self.current_raw_x}", 0)
-                curr_x = float(self.current_raw_x)
+            # Now add to table with the database ID
+            row_position = self.geo_table.rowCount()
+            self.geo_table.insertRow(row_position)
             
-            if hasattr(self, 'current_raw_y') and self.current_raw_y is not None:
-                self.geo_table.setItem(row_position, 13, QTableWidgetItem(str(self.current_raw_y)))
-                debug_print(f"Added current Y: {self.current_raw_y}", 0)
-                curr_y = float(self.current_raw_y)
+            # Add ID to first column
+            self.geo_table.setItem(row_position, 0, QTableWidgetItem(str(record.id)))
             
-            if hasattr(self, 'current_lat') and self.current_lat is not None:
-                self.geo_table.setItem(row_position, 14, QTableWidgetItem(str(self.current_lat)))
-                debug_print(f"Added current Lat: {self.current_lat}", 0)
-                curr_lat = float(self.current_lat)
+            # Add the extracted information to the cells
+            self.geo_table.setItem(row_position, 1, QTableWidgetItem(info_dict.get('symbol', '')))
+            self.geo_table.setItem(row_position, 2, QTableWidgetItem(info_dict.get('stratum', '')))
+            self.geo_table.setItem(row_position, 3, QTableWidgetItem(info_dict.get('rock_type', '')))
+            self.geo_table.setItem(row_position, 4, QTableWidgetItem(info_dict.get('era', '')))
+            self.geo_table.setItem(row_position, 5, QTableWidgetItem(info_dict.get('map_sheet', '')))
+            self.geo_table.setItem(row_position, 6, QTableWidgetItem(info_dict.get('address', '')))
             
-            if hasattr(self, 'current_lng') and self.current_lng is not None:
-                self.geo_table.setItem(row_position, 15, QTableWidgetItem(str(self.current_lng)))
-                debug_print(f"Added current Lng: {self.current_lng}", 0)
-                curr_lng = float(self.current_lng)
+            # Add distance and angle with units
+            if distance_value is not None:
+                self.geo_table.setItem(row_position, 7, QTableWidgetItem(f"{distance_value:.1f}m"))
+            if angle_value is not None:
+                self.geo_table.setItem(row_position, 8, QTableWidgetItem(f"{angle_value:.1f}°"))
             
-            # Save to database
-            try:
-                # Check if connection is already open
-                if db.is_closed():
-                    db.connect()
-                
-                record = DikeRecord.create(
-                    symbol=info_dict.get('symbol', ''),
-                    stratum=info_dict.get('stratum', ''),
-                    rock_type=info_dict.get('rock_type', ''),
-                    era=info_dict.get('era', ''),
-                    map_sheet=info_dict.get('map_sheet', ''),
-                    address=info_dict.get('address', ''),
-                    distance=distance_value,
-                    angle=angle_value,
-                    x_coord_1=prev_x,
-                    y_coord_1=prev_y,
-                    lat_1=prev_lat,
-                    lng_1=prev_lng,
-                    x_coord_2=curr_x,
-                    y_coord_2=curr_y,
-                    lat_2=curr_lat,
-                    lng_2=curr_lng
-                )
-                debug_print(f"Saved record to database with ID: {record.id}", 0)
-            except Exception as e:
-                debug_print(f"Error saving to database: {str(e)}", 0)
-                QMessageBox.warning(self, "Database Error", f"Error saving to database: {str(e)}")
-            finally:
-                if not db.is_closed():
-                    db.close()
+            # Add coordinates
+            if prev_x is not None:
+                self.geo_table.setItem(row_position, 9, QTableWidgetItem(f"{prev_x:.3f}"))
+            if prev_y is not None:
+                self.geo_table.setItem(row_position, 10, QTableWidgetItem(f"{prev_y:.3f}"))
+            if prev_lat is not None:
+                self.geo_table.setItem(row_position, 11, QTableWidgetItem(f"{prev_lat:.6f}"))
+            if prev_lng is not None:
+                self.geo_table.setItem(row_position, 12, QTableWidgetItem(f"{prev_lng:.6f}"))
+            
+            if curr_x is not None:
+                self.geo_table.setItem(row_position, 13, QTableWidgetItem(f"{curr_x:.3f}"))
+            if curr_y is not None:
+                self.geo_table.setItem(row_position, 14, QTableWidgetItem(f"{curr_y:.3f}"))
+            if curr_lat is not None:
+                self.geo_table.setItem(row_position, 15, QTableWidgetItem(f"{curr_lat:.6f}"))
+            if curr_lng is not None:
+                self.geo_table.setItem(row_position, 16, QTableWidgetItem(f"{curr_lng:.6f}"))
             
             # Select the new row
             self.geo_table.selectRow(row_position)
-            debug_print(f"Selected row {row_position}", 0)
             
             # Show confirmation
-            self.statusBar().showMessage(f"Added geological information to row {row_position + 1}", 3000)
+            self.statusBar().showMessage(f"Added record with ID {record.id} to database and table", 3000)
             
-            # Reset tool states
-            if self.info_button.isChecked():
-                self.info_button.setChecked(False)
-                self.info_tool_active = False
-                self.geo_info_label.setText("")
-                self.geo_info_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 2px; border-radius: 3px;")
+            # Reset tool states and current data
+            self.reset_tool_states()
             
-            if self.distance_button.isChecked():
-                self.distance_button.setChecked(False)
-                self.distance_tool_active = False
-                self.measurement_label.setText("")
-                self.measurement_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 2px; border-radius: 3px;")
-                
-                # Deactivate the map's distance measurement button
-                self.web_view.page().runJavaScript(
-                    """
-                    (function() {
-                        var distanceButton = document.querySelector('a.btn_distance, a.btn_distance.active');
-                        if (distanceButton) {
-                            //distanceButton.classList.remove('active');
-                            distanceButton.click();
-                            console.log('Deactivated map distance button');
-                        }
-                    })();
-                    """,
-                    lambda result: debug_print("Map distance button deactivated", 0)
-                )
+        except Exception as e:
+            debug_print(f"Error adding data: {str(e)}", 0)
+            QMessageBox.warning(self, "Error", f"Failed to add data: {str(e)}")
+        finally:
+            if not db.is_closed():
+                db.close()
+    
+    def reset_tool_states(self):
+        """Reset all tool states and current data after adding to table"""
+        # Reset info tool
+        if self.info_button.isChecked():
+            self.info_button.setChecked(False)
+            self.info_tool_active = False
+            self.geo_info_label.setText("")
+            self.geo_info_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 2px; border-radius: 3px;")
+        
+        # Reset distance tool
+        if self.distance_button.isChecked():
+            self.distance_button.setChecked(False)
+            self.distance_tool_active = False
+            self.measurement_label.setText("")
+            self.measurement_label.setStyleSheet("background-color: rgba(255, 255, 255, 220); padding: 2px; border-radius: 3px;")
             
-            # Reset current info and measurements
-            self.current_lat = ModuleNotFoundError
-            self.current_lng = None
-            self.previous_lat = None
-            self.previous_lng = None
-            self.current_raw_x = None
-            self.current_raw_y = None
-            self.previous_raw_x = None
-            self.previous_raw_y = None
-            self.current_geo_info = None
-            self.current_distance_measurement = None
-            self.current_angle_measurement = None
-            self.update_coordinates()
-            self.add_to_table_button.setEnabled(False)
-            
-        else:
-            QMessageBox.warning(self, "Parsing Error", "Could not parse the geological information")
+            # Deactivate the map's distance measurement button
+            self.web_view.page().runJavaScript(
+                """
+                (function() {
+                    var distanceButton = document.querySelector('a.btn_distance, a.btn_distance.active');
+                    if (distanceButton) {
+                        distanceButton.click();
+                        console.log('Deactivated map distance button');
+                    }
+                })();
+                """,
+                lambda result: debug_print("Map distance button deactivated", 0)
+            )
+        
+        # Reset current data
+        self.current_lat = None
+        self.current_lng = None
+        self.previous_lat = None
+        self.previous_lng = None
+        self.current_raw_x = None
+        self.current_raw_y = None
+        self.previous_raw_x = None
+        self.previous_raw_y = None
+        self.current_geo_info = None
+        self.current_distance_measurement = None
+        self.current_angle_measurement = None
+        
+        # Update UI
+        self.update_coordinates()
+        self.add_to_table_button.setEnabled(False)
     
     def clear_geo_table(self):
         """Clear all rows from the geological data table and the database"""
@@ -2203,7 +2217,10 @@ class KIGAMMapWindow(QMainWindow):
                 )
 
     def closeEvent(self, event):
-        """Override closeEvent to save map position and zoom level"""
+        """Override closeEvent to save window state and map position"""
+        # Save window geometry
+        self.settings.setValue("window_geometry", self.saveGeometry())
+        
         # Save map position and zoom level before closing
         self.save_map_state()
         event.accept()
@@ -2478,40 +2495,19 @@ class KIGAMMapWindow(QMainWindow):
             if db.is_closed():
                 db.connect()
             
-            # Get the database records to delete
-            records = DikeRecord.select()
-            
             # Process rows in reverse order to avoid changing indices during removal
             for row in reversed(selected_rows):
-                # Get the ID from the database (we'll need to identify this row in the database)
-                # We'll use symbol, stratum, rock_type, and coords to find matching records
-                symbol = self.geo_table.item(row, 0).text() if self.geo_table.item(row, 0) else ""
-                rock_type = self.geo_table.item(row, 2).text() if self.geo_table.item(row, 2) else ""
-                
-                # Get coordinate values for matching
-                x1 = self.geo_table.item(row, 8).text() if row < self.geo_table.rowCount() and self.geo_table.columnCount() > 8 and self.geo_table.item(row, 8) else None
-                y1 = self.geo_table.item(row, 9).text() if row < self.geo_table.rowCount() and self.geo_table.columnCount() > 9 and self.geo_table.item(row, 9) else None
-                
-                # Try to find and delete matching records from the database
-                query = records
-                if symbol:
-                    query = query.where(DikeRecord.symbol == symbol)
-                if rock_type:
-                    query = query.where(DikeRecord.rock_type == rock_type)
-                if x1 and y1:
+                # Get the ID from the first column
+                id_item = self.geo_table.item(row, 0)
+                if id_item and id_item.text():
                     try:
-                        x1_val = float(x1)
-                        y1_val = float(y1)
-                        query = query.where(DikeRecord.x_coord_1 == x1_val, DikeRecord.y_coord_1 == y1_val)
-                    except (ValueError, TypeError):
-                        pass
-                        
-                # Delete matching records
-                count = query.count()
-                if count > 0:
-                    for record in query:
-                        record.delete_instance()
-                    debug_print(f"Deleted {count} database record(s) matching row {row}", 0)
+                        record_id = int(id_item.text())
+                        # Delete the record from database
+                        DikeRecord.delete().where(DikeRecord.id == record_id).execute()
+                        debug_print(f"Deleted database record with ID: {record_id}", 0)
+                    except (ValueError, TypeError) as e:
+                        debug_print(f"Error converting ID to integer: {str(e)}", 0)
+                        continue
                 
                 # Remove row from the table
                 self.geo_table.removeRow(row)
@@ -2537,21 +2533,32 @@ class KIGAMMapWindow(QMainWindow):
         selected_row = selected_indexes[0].row()
         
         try:
+            # Get coordinates for the selected row first
+            lat1_item = self.geo_table.item(selected_row, 11)  # Latitude 1
+            lng1_item = self.geo_table.item(selected_row, 12)  # Longitude 1
+            
+            if not (lat1_item and lng1_item and lat1_item.text() and lng1_item.text()):
+                QMessageBox.warning(self, "Invalid Selection", "Selected row does not have valid coordinates.")
+                return
+            
+            selected_lat = float(lat1_item.text())
+            selected_lng = float(lng1_item.text())
+            
             # Collect all points from the table
             all_points = []
             for row in range(self.geo_table.rowCount()):
                 try:
                     # Get distance and angle for this row
-                    distance_item = self.geo_table.item(row, 6)
-                    angle_item = self.geo_table.item(row, 7)
-                    distance = float(distance_item.text().replace('m', '')) if distance_item else None
-                    angle = float(angle_item.text().replace('°', '')) if angle_item else None
+                    distance_item = self.geo_table.item(row, 7)
+                    angle_item = self.geo_table.item(row, 8)
+                    distance = float(distance_item.text().replace('m', '')) if distance_item and distance_item.text() else None
+                    angle = float(angle_item.text().replace('°', '')) if angle_item and angle_item.text() else None
                     
                     # Get coordinates for this row
-                    lat1_item = self.geo_table.item(row, 10)
-                    lng1_item = self.geo_table.item(row, 11)
-                    lat2_item = self.geo_table.item(row, 14)
-                    lng2_item = self.geo_table.item(row, 15)
+                    lat1_item = self.geo_table.item(row, 11)  # Updated column indices
+                    lng1_item = self.geo_table.item(row, 12)
+                    lat2_item = self.geo_table.item(row, 15)
+                    lng2_item = self.geo_table.item(row, 16)
                     
                     if lat1_item and lng1_item and lat1_item.text() and lng1_item.text():
                         point = {
@@ -2572,6 +2579,7 @@ class KIGAMMapWindow(QMainWindow):
             center_script = f"""
             (function() {{
                 try {{
+                    // Find the map object
                     var map = null;
                     if (window.map && typeof window.map.getView === 'function') {{
                         map = window.map;
@@ -2589,34 +2597,72 @@ class KIGAMMapWindow(QMainWindow):
                     
                     if (!map) return "Map not found";
                     
+                    // Get the view and current projection
+                    var view = map.getView();
+                    var currentProj = view.getProjection().getCode();
+                    
                     // Remove existing marker layer
                     map.getLayers().getArray()
                         .filter(layer => layer.get('name') === 'markerLayer')
                         .forEach(layer => map.removeLayer(layer));
                     
-                    var fromLonLat = ol.proj.fromLonLat || ol.proj.transform;
+                    // Transform coordinates function
+                    var fromLonLat = function(coords) {{
+                        if (window.ol && window.ol.proj && typeof window.ol.proj.transform === 'function') {{
+                            return window.ol.proj.transform(coords, 'EPSG:4326', currentProj);
+                        }}
+                        return coords;
+                    }};
+                    
                     var features = [];
                     
                     // Add all points from the table
                     var points = {json.dumps(all_points)};
                     points.forEach(function(point) {{
-                        var center = fromLonLat([point.lng1, point.lat1], map.getView().getProjection().getCode());
+                        // Transform coordinates to map projection
+                        var center = fromLonLat([point.lng1, point.lat1]);
                         
-                        // Calculate end point using distance and angle if available
+                        // Create point feature for the start point
+                        var pointFeature = new ol.Feature({{
+                            geometry: new ol.geom.Point(center)
+                        }});
+                        
+                        // Style for the point
+                        var pointStyle = new ol.style.Style({{
+                            image: new ol.style.Circle({{
+                                radius: point.isSelected ? 6 : 4,
+                                fill: new ol.style.Fill({{
+                                    color: point.isSelected ? 'red' : 'blue'
+                                }})
+                            }})
+                        }});
+                        
+                        pointFeature.setStyle(pointStyle);
+                        features.push(pointFeature);
+                        
+                        // If we have distance and angle, draw a line
                         if (point.distance && point.angle) {{
                             var distance = point.distance;
                             var angle = point.angle;
                             var angleRad = (90 - angle) * Math.PI / 180;
-                            var dx = distance * Math.cos(angleRad);
-                            var dy = distance * Math.sin(angleRad);
-                            var endPoint = [center[0] + dx, center[1] + dy];
+                            
+                            // Calculate the end point using the second set of coordinates if available
+                            var endPoint;
+                            if (point.lat2 !== null && point.lng2 !== null) {{
+                                endPoint = fromLonLat([point.lng2, point.lat2]);
+                            }} else {{
+                                // Calculate end point using distance and angle
+                                var dx = distance * Math.cos(angleRad);
+                                var dy = distance * Math.sin(angleRad);
+                                endPoint = [center[0] + dx, center[1] + dy];
+                            }}
                             
                             // Create line feature
                             var lineFeature = new ol.Feature({{
                                 geometry: new ol.geom.LineString([center, endPoint])
                             }});
                             
-                            // Create line style - red for selected, blue for others
+                            // Style for the line
                             var lineStyle = new ol.style.Style({{
                                 stroke: new ol.style.Stroke({{
                                     color: point.isSelected ? 'red' : 'blue',
@@ -2629,7 +2675,7 @@ class KIGAMMapWindow(QMainWindow):
                         }}
                     }});
                     
-                    // Create vector layer with all features
+                    // Create and add the vector layer
                     var vectorLayer = new ol.layer.Vector({{
                         source: new ol.source.Vector({{
                             features: features
@@ -2637,19 +2683,23 @@ class KIGAMMapWindow(QMainWindow):
                         name: 'markerLayer'
                     }});
                     
-                    // Add layer to map
                     map.addLayer(vectorLayer);
                     
-                    // Center map on selected point
+                    // Center on the selected point
                     var selectedPoint = points.find(p => p.isSelected);
                     if (selectedPoint) {{
-                        var selectedCenter = fromLonLat([selectedPoint.lng1, selectedPoint.lat1], 
-                                                      map.getView().getProjection().getCode());
-                        map.getView().setCenter(selectedCenter);
-                        map.getView().setZoom(15);
+                        var selectedCenter = fromLonLat([selectedPoint.lng1, selectedPoint.lat1]);
+                        view.animate({{
+                            center: selectedCenter,
+                            zoom: 15,
+                            duration: 1000
+                        }});
+                        
+                        console.log('Centering map on:', selectedCenter);
+                        return "Map centered on " + selectedCenter.join(', ');
                     }}
                     
-                    return "Map centered and all dike lines added";
+                    return "Map updated but no selected point found";
                 }} catch (e) {{
                     console.error("Error:", e);
                     return "Error: " + e.message;
@@ -2657,7 +2707,7 @@ class KIGAMMapWindow(QMainWindow):
             }})();
             """
             
-            # Execute the script and handle the result
+            debug_print(f"Centering map on coordinates: {selected_lat}, {selected_lng}", 0)
             self.web_view.page().runJavaScript(center_script, self.handle_center_map_result)
             
         except Exception as e:
@@ -2667,15 +2717,22 @@ class KIGAMMapWindow(QMainWindow):
     def handle_center_map_result(self, result):
         """Handle the result of the map centering operation"""
         debug_print(f"Center map result: {result}", 0)
-        if result.startswith("Error") or result == "Map not found" or result == "Transformation function not found":
+        if result.startswith("Error") or result == "Map not found":
             QMessageBox.warning(self, "Center Map Error", result)
         else:
-            self.statusBar().showMessage(f"Map centered on selected coordinates", 3000)
+            self.statusBar().showMessage(result, 3000)
 
     def on_table_double_click(self, row, column):
         """Handle double-click on table row by centering the map on the selected coordinates"""
         debug_print(f"Double-clicked row {row}, column {column}", 0)
         self.center_map_on_selected()
+
+    def restore_window_geometry(self):
+        """Restore the window's previous size and location"""
+        geometry = self.settings.value("window_geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+            debug_print("Restored window geometry", 0)
 
 # Main function to run the application as standalone
 def main():
