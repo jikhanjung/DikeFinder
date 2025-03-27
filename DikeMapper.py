@@ -2025,6 +2025,10 @@ class KIGAMMapWindow(QMainWindow):
             # Connect to database and create record
             if db.is_closed():
                 db.connect()
+
+            map_sheet = info_dict.get('map_sheet', '')
+            if '[' in map_sheet:
+                map_sheet = map_sheet.split('[')[0]
             
             # Create database record
             record = DikeRecord.create(
@@ -2032,7 +2036,7 @@ class KIGAMMapWindow(QMainWindow):
                 stratum=info_dict.get('stratum', ''),
                 rock_type=info_dict.get('rock_type', ''),
                 era=info_dict.get('era', ''),
-                map_sheet=info_dict.get('map_sheet', ''),
+                map_sheet=map_sheet,
                 address=info_dict.get('address', ''),
                 distance=distance_value,
                 angle=angle_value,
@@ -2060,7 +2064,7 @@ class KIGAMMapWindow(QMainWindow):
             self.geo_table.setItem(row_position, 2, QTableWidgetItem(info_dict.get('stratum', '')))
             self.geo_table.setItem(row_position, 3, QTableWidgetItem(info_dict.get('rock_type', '')))
             self.geo_table.setItem(row_position, 4, QTableWidgetItem(info_dict.get('era', '')))
-            self.geo_table.setItem(row_position, 5, QTableWidgetItem(info_dict.get('map_sheet', '')))
+            self.geo_table.setItem(row_position, 5, QTableWidgetItem(map_sheet))
             self.geo_table.setItem(row_position, 6, QTableWidgetItem(info_dict.get('address', '')))
             
             # Add distance and angle with units
