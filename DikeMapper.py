@@ -1090,17 +1090,8 @@ class KIGAMMapWindow(QMainWindow):
                     except Exception as e:
                         logging.error(f"Failed to create database backup: {str(e)}")
             
-            # Initialize the database
-            db.init(DB_PATH)
-            db.connect()
-            
-            # Create tables
-            db.create_tables([DikeRecord])
-            
-            # Close the connection
-            db.close()
-            
-            logging.info("Database initialized successfully")
+            # Initialize database with migrations
+            init_database(DB_PATH)
             
         except Exception as e:
             QMessageBox.critical(self, "Database Error", 

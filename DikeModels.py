@@ -2,6 +2,7 @@ import os
 import datetime
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
+from migrations.migration_manager import apply_migrations
 
 # Get the directory of the current script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +34,28 @@ class DikeRecord(BaseModel):
     y_coord_2 = FloatField(null=True)
     lat_2 = FloatField(null=True)
     lng_2 = FloatField(null=True)
+    memo = TextField(null=True)
     created_date = DateTimeField(default=datetime.datetime.now)
+    modified_date = DateTimeField(default=datetime.datetime.now)
+
+class SyncEvent(BaseModel):
+    event_id = CharField(unique=True)  # Server-provided sync event ID
+    timestamp = DateTimeField(default=datetime.datetime.now)
+    status = CharField()  # 'pending', 'in_progress', 'completed', 'failed'
+    error_message = TextField(null=True)  # Store any error information
+
+class SyncEventRecord(BaseModel):
+    sync_event = ForeignKeyField(SyncEvent, backref='records')
+    dike_record = ForeignKeyField(DikeRecord, backref='sync_events')
+    sync_result = CharField()  # 'success', 'failed', 'skipped', etc.
+    result_message = TextField(null=True)  # Details about success/failure
+    timestamp = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        # Ensure each record appears only once per sync event
+        indexes = (
+            (('sync_event', 'dike_record'), True),
+        )
 
 def init_database(custom_path=None):
     """Initialize the database and create tables
@@ -50,11 +72,17 @@ def init_database(custom_path=None):
     
     # Initialize database with the path
     db.init(DB_PATH)
-    
-    # Create tables
     db.connect()
-    db.create_tables([DikeRecord], safe=True)
-    db.close()
+    
+    try:
+        # Let the migration system handle everything
+        print("Checking database schema and applying migrations...")
+        apply_migrations(db)
+    except Exception as e:
+        print(f"Error initializing database: {str(e)}")
+        raise
+    finally:
+        db.close()
 
 def get_db():
     """Get the database instance"""
