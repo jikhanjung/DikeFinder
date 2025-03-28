@@ -114,6 +114,7 @@ class ExcelConverterWindow(QDialog):
         self.save_button.clicked.connect(self.save_to_database)
         self.save_button.setEnabled(False)  # Initially disabled
         
+       
         # Create table widget
         self.table_widget = QTableWidget(self)
         self.table_widget.setColumnCount(0)
@@ -460,6 +461,71 @@ class ExcelConverterWindow(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Error saving file: {str(e)}")
 
+
+class LoginDialog(QDialog):
+    """Dialog for KIGAM login"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.email = None
+        self.password = None
+        self.remember = False
+        self.initUI()
+        
+    def initUI(self):
+        """Initialize the login dialog UI"""
+        self.setWindowTitle('KIGAM Login')
+        self.setModal(True)
+        
+        # Create layout
+        layout = QVBoxLayout()
+        
+        # Email field
+        email_layout = QHBoxLayout()
+        email_label = QLabel('Email:')
+        self.email_input = QLineEdit()
+        email_layout.addWidget(email_label)
+        email_layout.addWidget(self.email_input)
+        layout.addLayout(email_layout)
+        
+        # Password field
+        password_layout = QHBoxLayout()
+        password_label = QLabel('Password:')
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.Password)
+        password_layout.addWidget(password_label)
+        password_layout.addWidget(self.password_input)
+        layout.addLayout(password_layout)
+        
+        # Remember me checkbox
+        self.remember_checkbox = QCheckBox('Remember login information')
+        layout.addWidget(self.remember_checkbox)
+        
+        # Login button
+        self.login_button = QPushButton('Login')
+        self.login_button.clicked.connect(self.handle_login)
+        layout.addWidget(self.login_button)
+        
+        # Set layout
+        self.setLayout(layout)
+        
+        # Set fixed size
+        self.setFixedSize(300, 150)
+        
+    def handle_login(self):
+        """Handle login button click"""
+        # Get credentials
+        self.email = self.email_input.text()
+        self.password = self.password_input.text()
+        self.remember = self.remember_checkbox.isChecked()
+        
+        # Validate credentials
+        if not self.email or not self.password:
+            QMessageBox.warning(self, "Login Error", "Please enter both email and password")
+            return
+            
+        # Accept the dialog
+        self.accept()
+
 class KIGAMMapWindow(QMainWindow):
     """A window to display the geological map from KIGAM website"""
     DEBUG_MODE = 0  # Default: no debugging (0), Basic (1), Verbose (2)
@@ -489,7 +555,130 @@ class KIGAMMapWindow(QMainWindow):
         finally:
             # Restore normal cursor
             QApplication.restoreOverrideCursor()
+            
+    def on_page_load_finished(self, success):
+        """Called when a page finishes loading"""
+        if not success:
+            self.statusBar().showMessage("Failed to load page", 3000)
+            logging.error("Page load failed")
+            return
         
+        current_url = self.web_view.url().toString()
+        logging.info(f"Page loaded: {current_url}")
+        
+        # Check if we need to handle login
+        if not hasattr(self, '_login_handled'):
+            logging.info("Showing login dialog")
+            self.handle_login()
+            self._login_handled = True
+            return
+        
+        # Check for login form if we're on the login page
+        if "auth/login" in current_url:
+            logging.info("On login page, checking form elements")
+            # Check for saved credentials and auto-login if available
+            if (self.email and self.password and 
+                self.settings.value("remember", False, type=bool)):
+                #self.login_status.setText("Auto-logging in...")
+                self.statusBar().showMessage("Auto-logging in...", 3000)
+                logging.info("Auto-logging with saved credentials")
+                QTimer.singleShot(500, self.login_to_kigam)  # Small delay to ensure page is fully loaded
+            
+            # Check if login form is ready and accessible
+            self.web_view.page().runJavaScript(
+                """
+                (function() {
+                    var emailField = document.querySelector('input[type="text"][placeholder="Email"]');
+                    var passwordField = document.querySelector('input[type="password"][placeholder="Password"]');
+                    var loginButton = document.querySelector('button.login-button');
+                    
+                    console.log('Login form check:', {
+                        emailField: !!emailField,
+                        passwordField: !!passwordField,
+                        loginButton: !!loginButton
+                    });
+                    
+                    return {
+                        emailField: !!emailField,
+                        passwordField: !!passwordField,
+                        loginButton: !!loginButton
+                    };
+                })();
+                """,
+                self.handle_login_form_check
+            )
+        # If login was attempted and we're no longer on the login page,
+        # assume login was successful
+        elif self.login_attempted and "auth/login" not in current_url:
+            logging.info("Login appears successful, no longer on login page")
+            self.login_successful = True
+            #self.login_status.setText("Login successful")
+            self.statusBar().showMessage("Login successful", 3000)
+            
+            # If we're now on some page in the KIGAM system but not yet 
+            # at our target map, navigate there
+            if "data.kigam.re.kr" in current_url and current_url != self.target_map_url:
+                logging.info(f"Navigating to target map: {self.target_map_url}")
+                self.statusBar().showMessage("Login successful. Loading geological map...", 3000)
+                
+                # Navigate to the specific geological map URL
+                self.web_view.load(QUrl(self.target_map_url))
+                return
+        
+        # If we've reached the target map URL
+        if current_url == self.target_map_url or "process=geology_50k" in current_url:
+            logging.info("Successfully loaded geological map")
+            self.statusBar().showMessage("Geological map loaded successfully", 3000)
+            #self.login_status.setText("Logged in and map loaded successfully")
+
+            
+            # Set up monitoring for popups
+            self.setup_map_interaction_monitoring()
+            
+            # Restore previous map position and zoom after a short delay
+            # to allow the map to fully initialize
+            QTimer.singleShot(2000, self.restore_map_state)
+            
+            # Load geological data from database after map loading is complete
+            QTimer.singleShot(2500, self.load_data_from_database)
+    
+    def handle_login(self):
+        """Handle the login process"""
+        # Check for saved credentials
+        saved_email = self.settings.value("email")
+        saved_password = self.settings.value("password")
+        remember = self.settings.value("remember", False, type=bool)
+        debug_print(f"Credentials from stored settings: {saved_email}, {saved_password}, {remember}", 0)
+        
+        if saved_email and saved_password and remember:
+            # Use saved credentials
+            self.email = saved_email
+            self.password = saved_password
+            self.remember = remember
+            self.login_to_kigam()
+        else:
+            # Show login dialog
+            login_dialog = LoginDialog(self)
+            if login_dialog.exec_() == QDialog.Accepted:
+                # Get credentials from dialog
+                self.email = login_dialog.email
+                self.password = login_dialog.password
+                self.remember = login_dialog.remember
+                debug_print(f"Credentials from dialog: {self.email}, {self.password}, {self.remember}", 0)
+                
+                if self.remember:
+                    self.save_credentials()
+                else:
+                    self.clear_saved_credentials()
+                    
+                # Proceed with login
+                self.login_to_kigam()
+            else:
+                # User cancelled login
+                QMessageBox.warning(self, "Login Required", 
+                    "Login is required to use the application. The application will now close.")
+                self.close()
+    
     def initUI(self):
         # Initialize settings first
         self.settings = QSettings("PaleoBytes", "DikeMapper")
@@ -519,34 +708,34 @@ class KIGAMMapWindow(QMainWindow):
         self.current_map_zoom = None
         
         # Add login controls
-        login_layout = QHBoxLayout()
+        #login_layout = QHBoxLayout()
         
-        self.email_label = QLabel("Email:")
-        self.email_input = QLineEdit()
-        self.password_label = QLabel("Password:")
-        self.password_input = QLineEdit()
-        self.password_input.setEchoMode(QLineEdit.Password)
-        self.remember_me = QCheckBox("Remember Me")
-        self.login_button = QPushButton("Login", self)
-        self.login_button.clicked.connect(self.login_to_kigam)
-        self.clear_credentials_button = QPushButton("Clear Saved")
+        #self.email_label = QLabel("Email:")
+        #self.email_input = QLineEdit()
+        #self.password_label = QLabel("Password:")
+        #self.password_input = QLineEdit()
+        #self.password_input.setEchoMode(QLineEdit.Password)
+        #self.remember_me = QCheckBox("Remember Me")
+        #self.login_button = QPushButton("Login", self)
+        #self.login_button.clicked.connect(self.login_to_kigam)
+        self.clear_credentials_button = QPushButton("Clear Login Info")
         self.clear_credentials_button.clicked.connect(self.clear_saved_credentials)
         self.clear_credentials_button.setToolTip("Clear saved credentials")
         
-        login_layout.addWidget(self.email_label)
-        login_layout.addWidget(self.email_input)
-        login_layout.addWidget(self.password_label)
-        login_layout.addWidget(self.password_input)
-        login_layout.addWidget(self.remember_me)
-        login_layout.addWidget(self.login_button)
-        login_layout.addWidget(self.clear_credentials_button)
+        #login_layout.addWidget(self.email_label)
+        #login_layout.addWidget(self.email_input)
+        #login_layout.addWidget(self.password_label)
+        #login_layout.addWidget(self.password_input)
+        #login_layout.addWidget(self.remember_me)
+        #login_layout.addWidget(self.login_button)
+        #login_layout.addWidget(self.clear_credentials_button)
         
-        self.layout.addLayout(login_layout)
+        #self.layout.addLayout(login_layout)
         
         # Add login status label
-        self.login_status = QLabel("")
-        self.login_status.setStyleSheet("color: blue;")
-        self.layout.addWidget(self.login_status)
+        #self.login_status = QLabel("")
+        #self.login_status.setStyleSheet("color: blue;")
+        #self.layout.addWidget(self.login_status)
         
         # Add map tool controls
         tools_layout = QHBoxLayout()
@@ -611,31 +800,6 @@ class KIGAMMapWindow(QMainWindow):
         self.web_view_layout = QVBoxLayout(self.web_view_container)
         self.web_view_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Add map control buttons (moved here after web_view_layout is created)
-        map_controls_layout = QHBoxLayout()
-        
-        self.pan_left_button = QPushButton("←")
-        self.pan_left_button.setToolTip("Pan map to the west")
-        self.pan_left_button.clicked.connect(lambda: self.pan_map("west"))
-        
-        self.pan_right_button = QPushButton("→")
-        self.pan_right_button.setToolTip("Pan map to the east")
-        self.pan_right_button.clicked.connect(lambda: self.pan_map("east"))
-        
-        self.pan_up_button = QPushButton("↑")
-        self.pan_up_button.setToolTip("Pan map to the north")
-        self.pan_up_button.clicked.connect(lambda: self.pan_map("north"))
-        
-        self.pan_down_button = QPushButton("↓")
-        self.pan_down_button.setToolTip("Pan map to the south")
-        self.pan_down_button.clicked.connect(lambda: self.pan_map("south"))
-        
-        map_controls_layout.addWidget(self.pan_left_button)
-        map_controls_layout.addWidget(self.pan_right_button)
-        map_controls_layout.addWidget(self.pan_up_button)
-        map_controls_layout.addWidget(self.pan_down_button)
-        
-        self.web_view_layout.addLayout(map_controls_layout)
         
         # Create web view with size policy
         self.web_view = QWebEngineView()
@@ -675,7 +839,7 @@ class KIGAMMapWindow(QMainWindow):
         self.import_excel_button.clicked.connect(self.import_excel_file)
         
         self.export_table_button = QPushButton("Export Table")
-        self.export_table_button.setToolTip("Export the table data to a CSV file")
+        self.export_table_button.setToolTip("Export the table data to a file")
         self.export_table_button.clicked.connect(self.export_geo_table)
 
         table_controls_layout.addWidget(self.add_to_table_button)
@@ -684,7 +848,7 @@ class KIGAMMapWindow(QMainWindow):
         table_controls_layout.addWidget(self.clear_table_button)
         table_controls_layout.addWidget(self.import_excel_button)
         table_controls_layout.addWidget(self.export_table_button)
-        
+        table_controls_layout.addWidget(self.clear_credentials_button)
         self.table_layout.addLayout(table_controls_layout)
         
         # Create the actual table for geological data
@@ -715,6 +879,11 @@ class KIGAMMapWindow(QMainWindow):
         self.geo_table.cellDoubleClicked.connect(self.on_table_double_click)
         
         self.table_layout.addWidget(self.geo_table)
+        # Create sync button
+        self.sync_button = QPushButton('Sync', self)
+        self.sync_button.clicked.connect(self.sync_data)
+        self.sync_button.setEnabled(False)  # Initially disabled
+        self.table_layout.addWidget(self.sync_button)
         
         self.splitter.addWidget(self.table_container)
         
@@ -928,10 +1097,13 @@ class KIGAMMapWindow(QMainWindow):
         remember = self.settings.value("remember", False, type=bool)
         
         if email and password:
-            self.email_input.setText(email)
-            self.password_input.setText(password)
-            self.remember_me.setChecked(remember)
-            self.login_status.setText("Credentials loaded. Auto-login will begin when page loads.")
+            self.email = email
+            self.password = password
+            self.remember = remember
+            #self.email_input.setText(email)
+            #self.password_input.setText(password)
+            #self.remember_me.setChecked(remember)
+            #self.login_status.setText("Credentials loaded. Auto-login will begin when page loads.")
             
             # Update button states
             self.clear_credentials_button.setEnabled(True)
@@ -940,11 +1112,11 @@ class KIGAMMapWindow(QMainWindow):
             
     def save_credentials(self):
         """Save credentials to settings if remember me is checked"""
-        if self.remember_me.isChecked():
-            self.settings.setValue("email", self.email_input.text())
-            self.settings.setValue("password", self.password_input.text())
+        if self.remember:
+            self.settings.setValue("email", self.email)
+            self.settings.setValue("password", self.password)
             self.settings.setValue("remember", True)
-            self.clear_credentials_button.setEnabled(True)
+            #self.clear_credentials_button.setEnabled(True)
             debug_print("Credentials saved", 1)
         else:
             # If "remember me" is unchecked, clear any saved credentials
@@ -955,27 +1127,34 @@ class KIGAMMapWindow(QMainWindow):
         self.settings.remove("email")
         self.settings.remove("password")
         self.settings.remove("remember")
-        self.login_status.setText("Saved credentials cleared")
+        #self.login_status.setText("Saved credentials cleared")
+        self.statusBar().showMessage("Saved credentials cleared", 3000)
         self.clear_credentials_button.setEnabled(False)
         debug_print("Credentials cleared", 1)
     
     def login_to_kigam(self):
         """Login to KIGAM website with the provided credentials"""
-        email = self.email_input.text()
-        password = self.password_input.text()
+        #email = self.email_input.text()
+        #password = self.password_input.text()
+
+        email = self.email
+        password = self.password
+
+        #self.email = login_dialog.email
+        #self.password = login_dialog.password
+        #self.remember = login_dialog.remember
         
         if not email or not password:
+            logging.error("Login attempted without credentials")
             QMessageBox.warning(self, "Login Error", "Please enter both email and password")
             return
         
-        # Save credentials if "remember me" is checked
-        self.save_credentials()
+        logging.info("Starting login process")
         
         # Set login attempted flag
         self.login_attempted = True
-        
-        # Inject JavaScript to enter credentials and submit the form
-        # Updated to match the KIGAM login form structure
+
+
         script = f"""
         (function() {{
             // Find the login form elements
@@ -1011,6 +1190,55 @@ class KIGAMMapWindow(QMainWindow):
         
         self.web_view.page().runJavaScript(script, self.handle_login_result)
     
+        '''
+        # Inject JavaScript to enter credentials and submit the form
+        script = f"""
+        (function() {{
+            // Find the login form elements
+            var emailField = document.querySelector('input[type="text"][placeholder="Email"]');
+            var passwordField = document.querySelector('input[type="password"][placeholder="Password"]');
+            var loginButton = document.querySelector('button.login-button');
+            
+            console.log('Login form elements:', {{
+                emailField: !!emailField,
+                passwordField: !!passwordField,
+                loginButton: !!loginButton
+            }});
+            
+            if (emailField && passwordField && loginButton) {{
+                // Enter credentials
+                emailField.value = "{email}";
+                passwordField.value = "{password}";
+                
+                // Submit the form
+                loginButton.click();
+                console.log('Login form submitted');
+            }} else {{
+                console.error('Login form elements not found');
+                // Try alternative selectors
+                var altEmailField = document.querySelector('input[name="email"]');
+                var altPasswordField = document.querySelector('input[name="password"]');
+                var altLoginButton = document.querySelector('input[type="submit"]');
+                
+                console.log('Alternative form elements:', {{
+                    altEmailField: !!altEmailField,
+                    altPasswordField: !!altPasswordField,
+                    altLoginButton: !!altLoginButton
+                }});
+                
+                if (altEmailField && altPasswordField && altLoginButton) {{
+                    altEmailField.value = "{email}";
+                    altPasswordField.value = "{password}";
+                    altLoginButton.click();
+                    console.log('Login form submitted with alternative selectors');
+                }}
+            }}
+        }})();
+        """
+        
+        logging.info("Injecting login script")
+        self.web_view.page().runJavaScript(script)
+        '''    
     def handle_login_result(self, result):
         """Handle the login JavaScript result"""
         debug_print(f"Login script result: {result}", 1)
@@ -1021,72 +1249,6 @@ class KIGAMMapWindow(QMainWindow):
                 "Could not locate the login form on the page. The website structure may have changed."
             )
     
-    def on_page_load_finished(self, success):
-        """Called when a page finishes loading"""
-        if not success:
-            self.statusBar().showMessage("Failed to load page", 3000)
-            return
-        
-        current_url = self.web_view.url().toString()
-        debug_print(f"Page loaded: {current_url}", 1)
-        
-        # Check for login form if we're on the login page
-        if "auth/login" in current_url:
-            # Check for saved credentials and auto-login if available
-            if (self.email_input.text() and self.password_input.text() and 
-                self.settings.value("remember", False, type=bool)):
-                self.login_status.setText("Auto-logging in...")
-                QTimer.singleShot(500, self.login_to_kigam)  # Small delay to ensure page is fully loaded
-            
-            # Check if login form is ready and accessible
-            self.web_view.page().runJavaScript(
-                """
-                (function() {
-                    var emailField = document.querySelector('input[type="text"][placeholder="Email"]');
-                    var passwordField = document.querySelector('input[type="password"][placeholder="Password"]');
-                    var loginButton = document.querySelector('button.login-button');
-                    
-                    return {
-                        emailField: !!emailField,
-                        passwordField: !!passwordField,
-                        loginButton: !!loginButton
-                    };
-                })();
-                """,
-                self.handle_login_form_check
-            )
-        # If login was attempted and we're no longer on the login page,
-        # assume login was successful
-        elif self.login_attempted and "auth/login" not in current_url:
-            self.login_successful = True
-            self.login_status.setText("Login successful")
-            
-            # If we're now on some page in the KIGAM system but not yet 
-            # at our target map, navigate there
-            if "data.kigam.re.kr" in current_url and current_url != self.target_map_url:
-                debug_print(f"Login successful, navigating to geological map at: {self.target_map_url}", 1)
-                self.statusBar().showMessage("Login successful. Loading geological map...", 3000)
-                
-                # Navigate to the specific geological map URL
-                self.web_view.load(QUrl(self.target_map_url))
-                return
-        
-        # If we've reached the target map URL
-        if current_url == self.target_map_url or "process=geology_50k" in current_url:
-            debug_print("Successfully loaded geological map", 1)
-            self.statusBar().showMessage("Geological map loaded successfully", 3000)
-            self.login_status.setText("Logged in and map loaded successfully")
-            
-            # Set up monitoring for popups
-            self.setup_map_interaction_monitoring()
-            
-            # Restore previous map position and zoom after a short delay
-            # to allow the map to fully initialize
-            QTimer.singleShot(2000, self.restore_map_state)
-            
-            # Load geological data from database after map loading is complete
-            QTimer.singleShot(2500, self.load_data_from_database)
-    
     def handle_login_form_check(self, result):
         """Handle the check for login form readiness"""
         debug_print(f"Login form check result: {result}", 1)
@@ -1095,10 +1257,12 @@ class KIGAMMapWindow(QMainWindow):
             self.statusBar().showMessage("Login form ready", 3000)
             if self.settings.value("remember", False, type=bool) and self.email_input.text() and self.password_input.text():
                 debug_print("Auto-login triggered", 1)
-                self.login_status.setText("Login form ready, auto-login processing...")
+                #self.login_status.setText("Login form ready, auto-login processing...")
+                self.statusBar().showMessage("Login form ready, auto-login processing...", 3000)
         else:
             self.statusBar().showMessage("Login form not ready or not found", 3000)
-            self.login_status.setText("Unable to find login form. Please check the website structure.")
+            #self.login_status.setText("Unable to find login form. Please check the website structure.")
+            self.statusBar().showMessage("Unable to find login form. Please check the website structure.", 3000)
     
     def activate_info_tool(self, checked):
         """Activate the information tool on the map"""
@@ -2186,40 +2350,60 @@ class KIGAMMapWindow(QMainWindow):
             self.statusBar().showMessage("Table is already empty", 3000)
     
     def export_geo_table(self):
-        """Export the geological data table to a CSV file"""
+        """Export the geological data table to a file (CSV, TSV, or Excel)"""
         if self.geo_table.rowCount() == 0:
             QMessageBox.warning(self, "Export Error", "No data to export")
             return
         
         # Open file dialog to select save location
-        file_name, _ = QFileDialog.getSaveFileName(
-            self, "Export Geological Data", "", "CSV Files (*.csv);;All Files (*)"
+        file_name, selected_filter = QFileDialog.getSaveFileName(
+            self, 
+            "Export Geological Data", 
+            "", 
+            "CSV Files (*.csv);;TSV Files (*.tsv);;Excel Files (*.xlsx);;All Files (*)"
         )
         
         if not file_name:
             return  # User canceled
             
         try:
-            with open(file_name, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                
-                # Write headers
-                headers = []
-                for column in range(self.geo_table.columnCount()):
-                    headers.append(self.geo_table.horizontalHeaderItem(column).text())
-                writer.writerow(headers)
-                
-                # Write data rows
-                for row in range(self.geo_table.rowCount()):
-                    row_data = []
-                    for column in range(self.geo_table.columnCount()):
-                        item = self.geo_table.item(row, column)
-                        row_data.append(item.text() if item else "")
-                    writer.writerow(row_data)
+            # Get all data from the table
+            data = []
+            headers = []
             
-            self.statusBar().showMessage(f"Data exported to {file_name}", 3000)
+            # Get headers
+            for col in range(self.geo_table.columnCount()):
+                headers.append(self.geo_table.horizontalHeaderItem(col).text())
+            data.append(headers)
+            
+            # Get data rows
+            for row in range(self.geo_table.rowCount()):
+                row_data = []
+                for col in range(self.geo_table.columnCount()):
+                    item = self.geo_table.item(row, col)
+                    row_data.append(item.text() if item else "")
+                data.append(row_data)
+            
+            # Export based on file type
+            if file_name.lower().endswith('.csv'):
+                with open(file_name, 'w', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerows(data)
+                    
+            elif file_name.lower().endswith('.tsv'):
+                with open(file_name, 'w', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file, delimiter='\t')
+                    writer.writerows(data)
+                    
+            elif file_name.lower().endswith('.xlsx'):
+                import pandas as pd
+                df = pd.DataFrame(data[1:], columns=data[0])
+                df.to_excel(file_name, index=False)
+                
+            self.statusBar().showMessage(f"Data exported successfully to {file_name}", 3000)
             
         except Exception as e:
+            logging.error(f"Error exporting data: {str(e)}")
             QMessageBox.critical(self, "Export Error", f"Error exporting data: {str(e)}")
     
     def poll_for_coordinates(self):
@@ -3247,6 +3431,10 @@ class KIGAMMapWindow(QMainWindow):
                 f"Error opening Excel converter: {str(e)}")
             logging.error(f"Excel converter error: {str(e)}")
 
+    def sync_data(self):
+        """Handle data synchronization"""
+        # TODO: Implement data synchronization logic
+        QMessageBox.information(self, "Sync", "Data synchronization will be implemented in a future update.")
 
 # Main function to run the application as standalone
 def main():
