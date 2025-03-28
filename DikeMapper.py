@@ -22,6 +22,7 @@ from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 from PyQt5.QtGui import QIcon, QFont
 from DikeModels import DikeRecord, init_database, db, DB_PATH
+from SyncDialog import SyncDialog
 import shutil
 
 # Company and program information
@@ -255,15 +256,16 @@ class ExcelConverterWindow(QDialog):
             self.df['Pixel_Y_Flipped'] = np.nan
             
             # Copy existing lat/lng values to calculated columns
-            self.df.loc[self.df[lat_col].notna(), 'Calculated_Lat'] = self.df[lat_col]
-            self.df.loc[self.df[lng_col].notna(), 'Calculated_Lng'] = self.df[lng_col]
+            # Convert to numeric and handle non-numeric values (like '맥모양') as null
+            self.df['Calculated_Lat'] = pd.to_numeric(self.df[lat_col], errors='coerce')
+            self.df['Calculated_Lng'] = pd.to_numeric(self.df[lng_col], errors='coerce')
             
             # Create a transformer from WGS84 (EPSG:4326) to Web Mercator (EPSG:3857)
             transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
             transformer_back = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
             
             # Convert coordinate columns to float, replacing any non-numeric values with NaN
-            for col in [x_col, y_col, lat_col, lng_col]:
+            for col in [x_col, y_col]:
                 self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
             
             # Constants for coordinate conversion
@@ -930,7 +932,7 @@ class KIGAMMapWindow(QMainWindow):
         # Create sync button
         self.sync_button = QPushButton('Sync', self)
         self.sync_button.clicked.connect(self.sync_data)
-        self.sync_button.setEnabled(False)  # Initially disabled
+        self.sync_button.setEnabled(True)  # Initially disabled
         self.table_layout.addWidget(self.sync_button)
         
         #self.splitter.addWidget(self.table_container)
@@ -3567,9 +3569,24 @@ class KIGAMMapWindow(QMainWindow):
             logging.error(f"Excel converter error: {str(e)}")
 
     def sync_data(self):
-        """Handle data synchronization"""
-        # TODO: Implement data synchronization logic
-        QMessageBox.information(self, "Sync", "Data synchronization will be implemented in a future update.")
+        """Open sync dialog and start sync process"""
+        dialog = SyncDialog(self)
+        dialog.exec_()
+    
+    def get_records_to_sync(self):
+        """Get records that need to be synced"""
+        try:
+            records = []
+            for row in range(self.geo_table.rowCount()):
+                # Get record from database using ID from table
+                record_id = self.geo_table.item(row, 0).text()
+                record = DikeRecord.get_by_id(record_id)
+                records.append(record)
+            return records
+        except Exception as e:
+            QMessageBox.warning(self, "Error", 
+                              f"Error getting records to sync: {str(e)}")
+            return []
 
 # Main function to run the application as standalone
 def main():
