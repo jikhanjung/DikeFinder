@@ -27,7 +27,7 @@ import shutil
 # Company and program information
 COMPANY_NAME = "PaleoBytes"
 PROGRAM_NAME = "DikeMapper"
-PROGRAM_VERSION = "0.0.3"
+PROGRAM_VERSION = "0.0.4"
 
 # Get user profile directory
 USER_PROFILE_DIRECTORY = os.path.expanduser('~')
@@ -847,6 +847,12 @@ class KIGAMMapWindow(QMainWindow):
         self.export_table_button = QPushButton("Export Table")
         self.export_table_button.setToolTip("Export the table data to a file")
         self.export_table_button.clicked.connect(self.export_geo_table)
+        
+        # Add new dock toggle button
+        self.dock_button = QPushButton("Dock/Undock")
+        self.dock_button.setToolTip("Toggle between docked and floating table view")
+        self.dock_button.clicked.connect(self.toggle_table_dock)
+        self.dock_button.setCheckable(True)
 
         table_controls_layout.addWidget(self.add_to_table_button)
         table_controls_layout.addWidget(self.delete_row_button)
@@ -855,25 +861,59 @@ class KIGAMMapWindow(QMainWindow):
         table_controls_layout.addWidget(self.import_excel_button)
         table_controls_layout.addWidget(self.export_table_button)
         table_controls_layout.addWidget(self.clear_credentials_button)
+        table_controls_layout.addWidget(self.dock_button)
         self.table_layout.addLayout(table_controls_layout)
 
         self.table_dock.setWidget(self.table_container)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.table_dock)
         
-        # Create the actual table for geological data
+        # Connect dock state change signal
+        self.table_dock.topLevelChanged.connect(self.on_dock_state_changed)
+
+        # Create and setup table
         self.geo_table = QTableWidget()
-        self.geo_table.setColumnCount(8)
-        self.geo_table.setHorizontalHeaderLabels(["기호 (Symbol)", "지층 (Stratum)", 
-                                                "대표암상 (Rock Type)", "시대 (Era)", 
-                                                "도폭 (Map Sheet)", "주소 (Address)",
-                                                "거리 (Distance)", "각도 (Angle)"])
-        self.geo_table.horizontalHeader().setStretchLastSection(True)
-        self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        
-        # Set selection behavior to select entire rows
+        self.geo_table.setColumnCount(17)  # 17 columns including ID
+
+        # Hide row numbers (vertical header)
+        self.geo_table.verticalHeader().setVisible(False)
+
+        # Simplified headers without parentheses
+        headers = ["ID", "기호", "지층", "대표암상", "시대", "도폭", "주소",
+                  "거리", "각도", "X 좌표 1", "Y 좌표 1", "위도 1", "경도 1",
+                  "X 좌표 2", "Y 좌표 2", "위도 2", "경도 2"]
+        self.geo_table.setHorizontalHeaderLabels(headers)
+
+        # Set specific column widths instead of uniform stretch
+        self.geo_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)  # Allow manual resizing
+
+        # Set reasonable default widths for each column type
+        column_widths = {
+            "ID": 40,      # ID - narrow
+            "기호": 60,      # Symbol - narrow
+            "지층": 120,     # Stratum - medium
+            "대표암상": 120, # Rock type - medium
+            "시대": 80,      # Era - narrow
+            "도폭": 80,      # Map sheet - narrow
+            "주소": 200,     # Address - wide
+            "거리": 70,      # Distance - narrow
+            "각도": 70,      # Angle - narrow
+            "X 좌표 1": 100, # Coordinates - medium
+            "Y 좌표 1": 100,
+            "위도 1": 100,
+            "경도 1": 100,
+            "X 좌표 2": 100,
+            "Y 좌표 2": 100,
+            "위도 2": 100,
+            "경도 2": 100
+        }
+
+        # Apply the column widths
+        for col, header in enumerate(headers):
+            self.geo_table.setColumnWidth(col, column_widths[header])
+
+        # Other table settings remain the same
         self.geo_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.geo_table.setSelectionMode(QTableWidget.SingleSelection)
-        
-        # Disable editing
         self.geo_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
         # Enable vertical scrollbar
@@ -947,7 +987,78 @@ class KIGAMMapWindow(QMainWindow):
         
         # Load the KIGAM website - updated to the correct login URL
         self.web_view.load(QUrl("https://data.kigam.re.kr/auth/login?redirect=/mgeo/sub01/page02.do"))
-    
+
+
+
+    def toggle_table_dock(self):
+        """Toggle the table between docked and floating state"""
+        if self.table_dock.isFloating():
+            debug_print("toggle_table_dock: Attempting to dock table", 0)
+            # Make sure we have a valid dock area
+            try:
+                last_dock_area = getattr(self, '_last_dock_area', Qt.BottomDockWidgetArea)
+                # Verify the dock area is valid
+                if not isinstance(last_dock_area, Qt.DockWidgetArea):
+                    debug_print(f"Invalid dock area {last_dock_area}, using bottom", 0)
+                    last_dock_area = Qt.BottomDockWidgetArea
+            except Exception as e:
+                debug_print(f"Error getting dock area: {e}, using bottom", 0)
+                last_dock_area = Qt.BottomDockWidgetArea
+            
+            # First make it not floating
+            self.table_dock.setFloating(False)
+            
+            # Remove the dock widget if it's already added
+            self.removeDockWidget(self.table_dock)
+            
+            # Then explicitly add it back to the last known dock area
+            self.addDockWidget(last_dock_area, self.table_dock)
+            self.table_dock.show()  # Make sure it's visible
+            self.statusBar().showMessage("Table docked", 3000)
+        else:
+            debug_print("toggle_table_dock: Undocking table", 0)
+            # Store the current dock area before undocking
+            current_area = self.dockWidgetArea(self.table_dock)
+            if current_area != Qt.NoDockWidgetArea:
+                self._last_dock_area = current_area
+            else:
+                self._last_dock_area = Qt.BottomDockWidgetArea
+            
+            self.table_dock.setFloating(True)
+            self.statusBar().showMessage("Table undocked - drag title bar to move", 3000)
+        
+        self.dock_button.setChecked(self.table_dock.isFloating())
+
+    def on_dock_state_changed(self, floating):
+        """Handle changes in dock widget state"""
+        self.dock_button.setChecked(floating)
+        if floating:
+            debug_print("on dock state changed: Table undocked", 0)
+            self.statusBar().showMessage("Table undocked - drag title bar to move", 3000)
+        else:
+            debug_print("on dock state changed: Table docked", 0)
+            self.statusBar().showMessage("Table docked", 3000)
+
+    def save_dock_state(self):
+        """Save the dock widget state"""
+        settings = QSettings("PaleoBytes", "DikeMapper")
+        settings.setValue("table_dock_floating", self.table_dock.isFloating())
+        if self.table_dock.isFloating():
+            settings.setValue("table_dock_geometry", self.table_dock.geometry())
+        settings.setValue("table_dock_area", int(self.dockWidgetArea(self.table_dock)))
+
+    def restore_dock_state(self):
+        """Restore the dock widget state"""
+        settings = QSettings("PaleoBytes", "DikeMapper")
+        floating = settings.value("table_dock_floating", False, type=bool)
+        self.table_dock.setFloating(floating)
+        if floating:
+            geometry = settings.value("table_dock_geometry")
+            if geometry:
+                self.table_dock.setGeometry(geometry)
+        dock_area = settings.value("table_dock_area", int(Qt.BottomDockWidgetArea), type=int)
+        self.addDockWidget(Qt.DockWidgetArea(dock_area), self.table_dock)
+
     def init_database(self):
         """Initialize the database"""
         global DB_PATH
@@ -1003,16 +1114,37 @@ class KIGAMMapWindow(QMainWindow):
             # Clear existing table data
             self.geo_table.setRowCount(0)
             
-            # Ensure we have enough columns for all data
-            if self.geo_table.columnCount() < 17:  # Increased by 1 for ID column
-                self.geo_table.setColumnCount(17)
-                headers = ["ID", "기호 (Symbol)", "지층 (Stratum)", 
-                           "대표암상 (Rock Type)", "시대 (Era)", 
-                           "도폭 (Map Sheet)", "주소 (Address)",
-                           "거리 (Distance)", "각도 (Angle)",
-                           "X 좌표 1", "Y 좌표 1", "위도 (Latitude) 1", "경도 (Longitude) 1",
-                           "X 좌표 2", "Y 좌표 2", "위도 (Latitude) 2", "경도 (Longitude) 2"]
+            # Ensure we have enough columns and set simplified headers
+            if self.geo_table.columnCount() < 16:
+                self.geo_table.setColumnCount(16)
+                headers = ["기호", "지층", "대표암상", "시대", "도폭", "주소",
+                          "거리", "각도", "X 좌표 1", "Y 좌표 1", "위도 1", "경도 1",
+                          "X 좌표 2", "Y 좌표 2", "위도 2", "경도 2"]
                 self.geo_table.setHorizontalHeaderLabels(headers)
+            
+                # Set column widths
+                column_widths = {
+                    "기호": 60,      # Symbol - narrow
+                    "지층": 120,     # Stratum - medium
+                    "대표암상": 120, # Rock type - medium
+                    "시대": 80,      # Era - narrow
+                    "도폭": 80,      # Map sheet - narrow
+                    "주소": 200,     # Address - wide
+                    "거리": 70,      # Distance - narrow
+                    "각도": 70,      # Angle - narrow
+                    "X 좌표 1": 100, # Coordinates - medium
+                    "Y 좌표 1": 100,
+                    "위도 1": 100,
+                    "경도 1": 100,
+                    "X 좌표 2": 100,
+                    "Y 좌표 2": 100,
+                    "위도 2": 100,
+                    "경도 2": 100
+                }
+                
+                # Apply the column widths
+                for col, header in enumerate(headers):
+                    self.geo_table.setColumnWidth(col, column_widths[header])
             
             # Load records from database
             records = DikeRecord.select().order_by(DikeRecord.created_date)
@@ -2915,6 +3047,7 @@ class KIGAMMapWindow(QMainWindow):
         
         # Save map position and zoom level before closing
         self.save_map_state()
+        self.save_dock_state()  # Add this line
         event.accept()
         
     def save_map_state(self):
@@ -3471,5 +3604,5 @@ if __name__ == "__main__":
 
 
 '''
-pyinstaller --name "DikeMapper_v0.0.3.exe" --onefile --noconsole DikeMapper.py
+pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole DikeMapper.py
 '''
