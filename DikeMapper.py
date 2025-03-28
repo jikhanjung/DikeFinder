@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                             QTableWidget, QTableWidgetItem, QMessageBox, 
                             QFileDialog, QCheckBox, QHeaderView, QSizePolicy,
-                            QLayout, QSplitter, QToolBar, QDialog)
+                            QLayout, QSplitter, QToolBar, QDialog, QDockWidget)
 from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSignal, QTimer, QSettings
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
@@ -792,8 +792,8 @@ class KIGAMMapWindow(QMainWindow):
         self.layout.addLayout(tools_layout)
         
         # Create splitter for map and table
-        self.splitter = QSplitter(Qt.Vertical)
-        self.layout.addWidget(self.splitter, 1)  # Give splitter stretch priority
+        #self.splitter = QSplitter(Qt.Vertical)
+        #self.layout.addWidget(self.splitter, 1)  # Give splitter stretch priority
         
         # Add web view to top part of splitter
         self.web_view_container = QWidget()
@@ -807,8 +807,14 @@ class KIGAMMapWindow(QMainWindow):
         self.web_view.setMinimumHeight(500)
         self.web_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Allow the web view to expand
         self.web_view_layout.addWidget(self.web_view)
-        self.splitter.addWidget(self.web_view_container)
-        
+        #self.splitter.addWidget(self.web_view_container)
+        self.layout.addWidget(self.web_view_container)
+
+        # Create dock widget for database table
+        self.table_dock = QDockWidget("Database Table", self)
+        self.table_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea)
+        self.table_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+
         # Create table view in bottom part of splitter
         self.table_container = QWidget()
         self.table_layout = QVBoxLayout(self.table_container)
@@ -850,6 +856,8 @@ class KIGAMMapWindow(QMainWindow):
         table_controls_layout.addWidget(self.export_table_button)
         table_controls_layout.addWidget(self.clear_credentials_button)
         self.table_layout.addLayout(table_controls_layout)
+
+        self.table_dock.setWidget(self.table_container)
         
         # Create the actual table for geological data
         self.geo_table = QTableWidget()
@@ -885,10 +893,13 @@ class KIGAMMapWindow(QMainWindow):
         self.sync_button.setEnabled(False)  # Initially disabled
         self.table_layout.addWidget(self.sync_button)
         
-        self.splitter.addWidget(self.table_container)
+        #self.splitter.addWidget(self.table_container)
+
+        #self.splitter.addWidget(self.table_dock)
+        self.layout.addWidget(self.table_dock)
         
         # Set initial splitter sizes (70% map, 30% table)
-        self.splitter.setSizes([600, 200])
+        #self.splitter.setSizes([600, 200])
         
         # Create JavaScript handler for callbacks
         class JSHandler(QObject):
