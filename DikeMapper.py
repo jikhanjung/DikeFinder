@@ -1,10 +1,6 @@
-import sys
-import os
+import sys, os
 import datetime
-import json
-import csv
-import re
-import math
+import json, csv, re, math
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -49,6 +45,15 @@ try:
     WEB_ENGINE_AVAILABLE = True
 except ImportError:
     WEB_ENGINE_AVAILABLE = False
+
+# Get the path to the resource file
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 # Set up logging
 def setup_logging():
@@ -3591,6 +3596,7 @@ class KIGAMMapWindow(QMainWindow):
 # Main function to run the application as standalone
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(resource_path('icons/DikeMapper.png')))
     
     # Check if WebEngine is available
     if WEB_ENGINE_AVAILABLE:
@@ -3612,5 +3618,5 @@ if __name__ == "__main__":
 
 
 '''
-pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole DikeMapper.py
+pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole --add-data "icons/*.png;icons" DikeMapper.py
 '''
