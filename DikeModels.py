@@ -1,5 +1,8 @@
 import os
 import datetime
+import time
+import random
+import string
 from peewee import *
 from playhouse.sqlite_ext import SqliteExtDatabase
 from migrations.migration_manager import apply_migrations
@@ -13,11 +16,28 @@ DB_PATH = os.path.join(SCRIPT_DIR, 'dikemapper.db')
 # Initialize the database with SQLite
 db = SqliteDatabase(None)  # Initialize without path
 
+def base62_encode(num):
+    chars = string.digits + string.ascii_letters
+    base = len(chars)
+    result = ''
+    while num > 0:
+        num, rem = divmod(num, base)
+        result = chars[rem] + result
+    return result or '0'
+
+def generate_sortable_id(length=10):
+    t = int(time.time() * 1000)  # current time in ms
+    r = random.randint(0, 9999)  # add randomness
+    combined = int(f"{t}{r}")
+    encoded = base62_encode(combined)
+    return encoded.rjust(length, '0')  # pad for consistent length
+
 class BaseModel(Model):
     class Meta:
         database = db
 
 class DikeRecord(BaseModel):
+    unique_id = CharField(max_length=10, unique=True, null=False)
     symbol = CharField(null=True)
     stratum = CharField(null=True)
     rock_type = CharField(null=True)
@@ -37,6 +57,13 @@ class DikeRecord(BaseModel):
     memo = TextField(null=True)
     created_date = DateTimeField(default=datetime.datetime.now)
     modified_date = DateTimeField(default=datetime.datetime.now)
+
+    def save(self, *args, **kwargs):
+        if not self.unique_id:
+            self.unique_id = generate_sortable_id()
+        if not self.modified_date:
+            self.modified_date = datetime.datetime.now()
+        return super().save(*args, **kwargs)
 
 class SyncEvent(BaseModel):
     event_id = CharField(unique=True)  # Server-provided sync event ID

@@ -53,6 +53,7 @@ class SyncWorker(QThread):
                             record_data = {
                                 "event_id": event_id,
                                 "dike_record": {
+                                    "unique_id": record.unique_id,
                                     "symbol": record.symbol,
                                     "stratum": record.stratum,
                                     "rock_type": record.rock_type,
@@ -70,13 +71,14 @@ class SyncWorker(QThread):
                                     "lat_2": float(record.lat_2) if record.lat_2 else None,
                                     "lng_2": float(record.lng_2) if record.lng_2 else None,
                                     "memo": record.memo,
-                                    "modified_date": record.modified_date.isoformat() if record.modified_date else None
+                                    "modified_date": record.modified_date.isoformat() if record.modified_date else None,
+                                    "created_date": record.created_date.isoformat() if record.created_date else None
                                 }
                             }
                             
                             # Only show progress every 10 records or on failure
                             if i % 10 == 0:
-                                self.progress.emit(f"Syncing record {i}/{total_records}: {record.symbol}")
+                                self.progress.emit(f"Syncing record {i}/{total_records}: {record.unique_id} ({record.symbol})")
                             
                             response = requests.post(
                                 f"{self.base_url}/submit-dike-record/",
@@ -99,11 +101,17 @@ class SyncWorker(QThread):
                                 success_count += 1
                             else:
                                 fail_count += 1
-                                self.progress.emit(f"Failed to sync record {i}/{total_records} ({record.symbol}): {response.text}")
+                                self.progress.emit(
+                                    f"Failed to sync record {i}/{total_records} "
+                                    f"(ID: {record.unique_id}, Symbol: {record.symbol}): {response.text}"
+                                )
                             
                         except Exception as e:
                             fail_count += 1
-                            self.progress.emit(f"Error syncing record {i}/{total_records} ({record.symbol}): {str(e)}")
+                            self.progress.emit(
+                                f"Error syncing record {i}/{total_records} "
+                                f"(ID: {record.unique_id}, Symbol: {record.symbol}): {str(e)}"
+                            )
                             SyncEventRecord.create(
                                 sync_event=self.sync_event,
                                 dike_record=record,
@@ -114,10 +122,21 @@ class SyncWorker(QThread):
                     
                     # Step 4: Update final sync status
                     final_status = 'completed' if fail_count == 0 else 'completed_with_errors'
-                    self.sync_event.status = final_status
-                    self.sync_event.error_message = (f"{fail_count} records failed to sync" 
-                                                   if fail_count > 0 else None)
-                    self.sync_event.save()
+                    
+                    # Notify server that sync is complete
+                    self.progress.emit("\nNotifying server of sync completion...")
+                    end_sync_response = requests.post(
+                        f"{self.base_url}/sync-events/{event_id}/end_sync/",
+                        json={
+                            "status": final_status,
+                            "error_message": f"{fail_count} records failed to sync" if fail_count > 0 else None
+                        }
+                    )
+                    
+                    if end_sync_response.status_code != 200:
+                        self.progress.emit(f"Warning: Failed to notify server of sync completion: {end_sync_response.text}")
+                    else:
+                        self.progress.emit("Server notified of sync completion")
                     
                     # Show summary
                     self.progress.emit("\nSync completed!")
@@ -129,9 +148,17 @@ class SyncWorker(QThread):
                     
                 except Exception as e:
                     if self.sync_event:
-                        self.sync_event.status = 'failed'
-                        self.sync_event.error_message = str(e)
-                        self.sync_event.save()
+                        # Try to notify server of failure
+                        try:
+                            requests.post(
+                                f"{self.base_url}/sync-events/{event_id}/end_sync/",
+                                json={
+                                    "status": "failed",
+                                    "error_message": str(e)
+                                }
+                            )
+                        except Exception as notify_error:
+                            self.progress.emit(f"Warning: Failed to notify server of sync failure: {notify_error}")
                     transaction.rollback()
                     raise
                     
