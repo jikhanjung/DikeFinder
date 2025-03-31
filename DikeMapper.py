@@ -3660,5 +3660,5 @@ if __name__ == "__main__":
 
 
 '''
-pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole --add-data "icons/*.png;icons" --hidden-import requests --hidden-import pandas --hidden-import numpy --hidden-import pyproj --hidden-import PyQt5 --hidden-import PyQt5.QtWebEngineWidgets --hidden-import PyQt5.QtWebEngineCore --hidden-import PyQt5.QtWebEngine DikeMapper.py
+pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole --add-data "icons/*.png;icons" --add-data "migrations/*;migrations" --hidden-import requests --hidden-import pandas --hidden-import numpy --hidden-import pyproj --hidden-import PyQt5 --hidden-import PyQt5.QtWebEngineWidgets --hidden-import PyQt5.QtWebEngineCore --hidden-import PyQt5.QtWebEngine --hidden-import urllib3 --hidden-import chardet --hidden-import certifi --hidden-import idna --hidden-import json --hidden-import datetime --hidden-import QSettings --hidden-import peewee --hidden-import playhouse --hidden-import playhouse.migrate --hidden-import playhouse.sqlite_ext DikeMapper.py
 '''
