@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
-                           QLabel, QProgressBar, QTextEdit, QMessageBox)
+                           QLabel, QProgressBar, QTextEdit, QMessageBox, QLineEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from DikeModels import DikeRecord, SyncEvent, SyncEventRecord, db
+from DikeModels import DikeRecord, SyncEvent, db
 import requests
 import json
 import datetime
@@ -38,13 +38,15 @@ class SyncWorker(QThread):
                     self.sync_event = SyncEvent.create(
                         event_id=event_id,
                         status='in_progress',
-                        timestamp=datetime.datetime.now()
+                        timestamp=datetime.datetime.now(),
+                        total_records=len(self.records)
                     )
                     
                     # Step 3: Submit all records
                     total_records = len(self.records)
                     success_count = 0
                     fail_count = 0
+                    sync_details = []
                     
                     self.progress.emit(f"\nStarting sync of {total_records} records...")
                     
@@ -72,7 +74,8 @@ class SyncWorker(QThread):
                                     "lng_2": float(record.lng_2) if record.lng_2 else None,
                                     "memo": record.memo,
                                     "modified_date": record.modified_date.isoformat() if record.modified_date else None,
-                                    "created_date": record.created_date.isoformat() if record.created_date else None
+                                    "created_date": record.created_date.isoformat() if record.created_date else None,
+                                    "is_deleted": record.is_deleted
                                 }
                             }
                             
@@ -89,15 +92,19 @@ class SyncWorker(QThread):
                             result_message = ('Successfully synced' if response.status_code == 201 
                                             else f"Failed: {response.text}")
                             
-                            SyncEventRecord.create(
-                                sync_event=self.sync_event,
-                                dike_record=record,
-                                sync_result=sync_result,
-                                result_message=result_message,
-                                timestamp=datetime.datetime.now()
-                            )
+                            # Store sync result in details
+                            sync_details.append({
+                                'record_id': record.unique_id,
+                                'symbol': record.symbol,
+                                'result': sync_result,
+                                'message': result_message,
+                                'timestamp': datetime.datetime.now().isoformat()
+                            })
                             
                             if sync_result == 'success':
+                                # Update last_sync_date on successful sync
+                                record.last_sync_date = datetime.datetime.now()
+                                record.save()
                                 success_count += 1
                             else:
                                 fail_count += 1
@@ -108,20 +115,29 @@ class SyncWorker(QThread):
                             
                         except Exception as e:
                             fail_count += 1
+                            error_msg = str(e)
                             self.progress.emit(
                                 f"Error syncing record {i}/{total_records} "
-                                f"(ID: {record.unique_id}, Symbol: {record.symbol}): {str(e)}"
+                                f"(ID: {record.unique_id}, Symbol: {record.symbol}): {error_msg}"
                             )
-                            SyncEventRecord.create(
-                                sync_event=self.sync_event,
-                                dike_record=record,
-                                sync_result='failed',
-                                result_message=str(e),
-                                timestamp=datetime.datetime.now()
-                            )
+                            sync_details.append({
+                                'record_id': record.unique_id,
+                                'symbol': record.symbol,
+                                'result': 'failed',
+                                'message': error_msg,
+                                'timestamp': datetime.datetime.now().isoformat()
+                            })
                     
                     # Step 4: Update final sync status
                     final_status = 'completed' if fail_count == 0 else 'completed_with_errors'
+                    
+                    # Update sync event with final results
+                    self.sync_event.status = final_status
+                    self.sync_event.success_count = success_count
+                    self.sync_event.fail_count = fail_count
+                    self.sync_event.details = json.dumps(sync_details)
+                    self.sync_event.end_timestamp = datetime.datetime.now()
+                    self.sync_event.save()
                     
                     # Notify server that sync is complete
                     self.progress.emit("\nNotifying server of sync completion...")
@@ -148,6 +164,12 @@ class SyncWorker(QThread):
                     
                 except Exception as e:
                     if self.sync_event:
+                        # Update sync event with failure status
+                        self.sync_event.status = 'failed'
+                        self.sync_event.error_message = str(e)
+                        self.sync_event.end_timestamp = datetime.datetime.now()
+                        self.sync_event.save()
+                        
                         # Try to notify server of failure
                         try:
                             requests.post(
@@ -180,6 +202,15 @@ class SyncDialog(QDialog):
         self.setMinimumWidth(400)
         
         layout = QVBoxLayout()
+        
+        # Server URL input
+        url_layout = QHBoxLayout()
+        url_label = QLabel("Server URL:")
+        self.url_input = QLineEdit(self.base_url)
+        self.url_input.setPlaceholderText("Enter server URL (e.g., http://127.0.0.1:8000/dikesync)")
+        url_layout.addWidget(url_label)
+        url_layout.addWidget(self.url_input)
+        layout.addLayout(url_layout)
         
         # Status label
         self.status_label = QLabel("Ready to sync")
@@ -214,6 +245,13 @@ class SyncDialog(QDialog):
         self.log_text.append(message)
         
     def start_sync(self):
+        # Update server URL from input
+        new_url = self.url_input.text().strip()
+        if new_url != self.base_url:
+            self.base_url = new_url
+            self.settings.setValue('sync/server_url', new_url)
+            self.settings.sync()
+        
         # Get records from parent window
         records = self.parent.get_records_to_sync()
         if not records:

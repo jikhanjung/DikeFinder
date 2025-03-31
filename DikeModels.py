@@ -57,6 +57,42 @@ class DikeRecord(BaseModel):
     memo = TextField(null=True)
     created_date = DateTimeField(default=datetime.datetime.now)
     modified_date = DateTimeField(default=datetime.datetime.now)
+    is_deleted = BooleanField(default=False)
+    last_sync_date = DateTimeField(null=True)
+
+    # Manager for active (non-deleted) records
+    @classmethod
+    def active(cls):
+        """Get a query for non-deleted records only"""
+        return cls.select().where(cls.is_deleted == False)
+
+    # Manager for all records including deleted
+    @classmethod
+    def all_records(cls):
+        """Get a query for all records including deleted ones"""
+        return cls.select()
+
+    # Manager for deleted records only
+    @classmethod
+    def deleted(cls):
+        """Get a query for deleted records only"""
+        return cls.select().where(cls.is_deleted == True)
+
+    def soft_delete(self):
+        """Mark the record as deleted without actually removing it from the database"""
+        self.is_deleted = True
+        self.modified_date = datetime.datetime.now()
+        self.save()
+
+    def restore(self):
+        """Restore a soft-deleted record"""
+        self.is_deleted = False
+        self.modified_date = datetime.datetime.now()
+        self.save()
+
+    def hard_delete(self):
+        """Permanently delete the record from the database"""
+        return super().delete_instance()
 
     def save(self, *args, **kwargs):
         if not self.unique_id:
@@ -65,24 +101,26 @@ class DikeRecord(BaseModel):
             self.modified_date = datetime.datetime.now()
         return super().save(*args, **kwargs)
 
+    @classmethod
+    def bulk_soft_delete(cls, query):
+        """Soft delete multiple records at once"""
+        return (query
+                .update({
+                    cls.is_deleted: True,
+                    cls.modified_date: datetime.datetime.now()
+                })
+                .execute())
+
 class SyncEvent(BaseModel):
     event_id = CharField(unique=True)  # Server-provided sync event ID
-    timestamp = DateTimeField(default=datetime.datetime.now)
+    timestamp = DateTimeField(default=datetime.datetime.now)  # Start timestamp
+    end_timestamp = DateTimeField(null=True)  # End timestamp when sync completes or fails
     status = CharField()  # 'pending', 'in_progress', 'completed', 'failed'
     error_message = TextField(null=True)  # Store any error information
-
-class SyncEventRecord(BaseModel):
-    sync_event = ForeignKeyField(SyncEvent, backref='records')
-    dike_record = ForeignKeyField(DikeRecord, backref='sync_events')
-    sync_result = CharField()  # 'success', 'failed', 'skipped', etc.
-    result_message = TextField(null=True)  # Details about success/failure
-    timestamp = DateTimeField(default=datetime.datetime.now)
-
-    class Meta:
-        # Ensure each record appears only once per sync event
-        indexes = (
-            (('sync_event', 'dike_record'), True),
-        )
+    total_records = IntegerField(null=True)  # Total number of records to sync
+    success_count = IntegerField(default=0)  # Number of successfully synced records
+    fail_count = IntegerField(default=0)  # Number of failed records
+    details = TextField(null=True)  # Detailed sync results
 
 def init_database(custom_path=None):
     """Initialize the database and create tables

@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSignal, QTimer, QSettings
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 from PyQt5.QtGui import QIcon, QFont
-from DikeModels import DikeRecord, init_database, db, DB_PATH
+from DikeModels import DikeRecord, init_database, db, DB_PATH, generate_sortable_id
 from SyncDialog import SyncDialog
 import shutil
 
@@ -202,25 +202,49 @@ class ExcelConverterWindow(QDialog):
                 self.df['각도'] = self.df['각도'].apply(lambda x: (90 - x + 360) % 360 if pd.notnull(x) else x)
 
             # Create records for each row
-            records = []
-            for _, row in self.df.iterrows():
-                record_data = {}
-                for excel_col, db_field in column_mapping.items():
-                    if excel_col in self.df.columns:
-                        value = row[excel_col]
-                        # Convert NaN to None for database
-                        if pd.isna(value):
-                            value = None
-                        record_data[db_field] = value
-                
-                records.append(DikeRecord(**record_data))
+            with db.atomic() as transaction:
+                try:
+                    records = []
+                    used_ids = set()  # Track used IDs
+                    for _, row in self.df.iterrows():
+                        record_data = {}
+                        for excel_col, db_field in column_mapping.items():
+                            if excel_col in self.df.columns:
+                                value = row[excel_col]
+                                # Convert NaN to None for database
+                                if pd.isna(value):
+                                    value = None
+                                record_data[db_field] = value
+                        
+                        # Generate unique_id and ensure it's not already used
+                        while True:
+                            unique_id = generate_sortable_id()
+                            if unique_id not in used_ids and not DikeRecord.select().where(DikeRecord.unique_id == unique_id).exists():
+                                used_ids.add(unique_id)
+                                break
+                        
+                        record_data['unique_id'] = unique_id
+                        # Set is_deleted to False for new records
+                        record_data['is_deleted'] = False
+                        records.append(DikeRecord(**record_data))
+                    
+                    # Bulk insert records in chunks to avoid SQLite limitations
+                    chunk_size = 100
+                    for i in range(0, len(records), chunk_size):
+                        chunk = records[i:i + chunk_size]
+                        DikeRecord.bulk_create(chunk)
+                    
+                    QMessageBox.information(self, "Database Save Complete", 
+                        f"Successfully saved {len(records)} records to the database.")
+                        
+                except Exception as e:
+                    transaction.rollback()
+                    QMessageBox.critical(self, "Database Save Error", 
+                        f"Error saving to database: {str(e)}")
+                    return
             
-            # Bulk insert records
-            DikeRecord.bulk_create(records)
-            
-            QMessageBox.information(self, "Database Save Complete", 
-                f"Successfully saved {len(records)} records to the database.")
-                
+            self.accept()
+
         except Exception as e:
             QMessageBox.critical(self, "Database Save Error", 
                 f"Error saving to database: {str(e)}")
@@ -243,6 +267,13 @@ class ExcelConverterWindow(QDialog):
             self.df = pd.read_excel(file_name)
             column_header_text = "지역	기호	지층	대표암상	시대	각도	거리 (km)	주소	색	좌표 X	좌표 Y	사진 이름	코드1 좌표 Lat	코드 1 좌표 Lng"
             column_header_list = column_header_text.split('\t')
+            
+            # Remove unnecessary columns
+            columns_to_keep = [col for col in column_header_list if col in self.df.columns]
+            columns_to_remove = [col for col in self.df.columns if col not in column_header_list]
+            if columns_to_remove:
+                self.df = self.df.drop(columns=columns_to_remove)
+                print(f"Removed unnecessary columns: {', '.join(columns_to_remove)}")
             
             # Define column names
             image_col = '사진 이름'
@@ -270,7 +301,7 @@ class ExcelConverterWindow(QDialog):
             transformer_back = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
             
             # Convert coordinate columns to float, replacing any non-numeric values with NaN
-            for col in [x_col, y_col]:
+            for col in [x_col, y_col,lat_col,lng_col]:
                 self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
             
             # Constants for coordinate conversion
@@ -757,10 +788,10 @@ class KIGAMMapWindow(QMainWindow):
         self.distance_button.clicked.connect(self.activate_distance_tool)
         self.distance_button.setCheckable(True)
         
-        self.add_to_table_button = QPushButton("Add to Table")
-        self.add_to_table_button.setToolTip("Add current geological information to the table")
-        self.add_to_table_button.clicked.connect(self.add_current_info_to_table)
-        self.add_to_table_button.setEnabled(False)  # Disabled until we have info
+        #self.add_to_table_button = QPushButton("Add to Table")
+        #self.add_to_table_button.setToolTip("Add current geological information to the table")
+        #self.add_to_table_button.clicked.connect(self.add_current_info_to_table)
+        #self.add_to_table_button.setEnabled(False)  # Disabled until we have info
         
         # Add info display as a QLineEdit instead of a large text box
         self.geo_info_label = QLineEdit()
@@ -793,7 +824,7 @@ class KIGAMMapWindow(QMainWindow):
         tools_layout.addWidget(self.measurement_label, 1)  # Stretch factor of 1
         tools_layout.addWidget(self.coords_label1)
         tools_layout.addWidget(self.coords_label2)
-        tools_layout.addWidget(self.add_to_table_button)
+        #tools_layout.addWidget(self.add_to_table_button)
         tools_layout.addStretch(1)  # Add stretch to push other widgets to the right
         
         self.layout.addLayout(tools_layout)
@@ -1144,8 +1175,8 @@ class KIGAMMapWindow(QMainWindow):
                 for col, header in enumerate(headers):
                     self.geo_table.setColumnWidth(col, column_widths[header])
             
-            # Load records from database
-            records = DikeRecord.select().order_by(DikeRecord.created_date)
+            # Load records from database (only active records)
+            records = DikeRecord.active().order_by(DikeRecord.created_date)
             
             for record in records:
                 row = self.geo_table.rowCount()
@@ -3296,7 +3327,7 @@ class KIGAMMapWindow(QMainWindow):
         self.center_selected_button.setEnabled(has_selection)
         
     def delete_selected_row(self):
-        """Delete the selected row from the table and database"""
+        """Soft delete the selected row from the table and database"""
         selected_rows = sorted(set(index.row() for index in self.geo_table.selectedIndexes()))
         
         if not selected_rows:
@@ -3325,19 +3356,23 @@ class KIGAMMapWindow(QMainWindow):
                 if id_item and id_item.text():
                     try:
                         record_id = int(id_item.text())
-                        # Delete the record from database
-                        DikeRecord.delete().where(DikeRecord.id == record_id).execute()
-                        debug_print(f"Deleted database record with ID: {record_id}", 0)
+                        # Soft delete the record from database
+                        record = DikeRecord.get_by_id(record_id)
+                        record.soft_delete()
+                        debug_print(f"Soft deleted database record with ID: {record_id}", 0)
                     except (ValueError, TypeError) as e:
                         debug_print(f"Error converting ID to integer: {str(e)}", 0)
+                        continue
+                    except DikeRecord.DoesNotExist:
+                        debug_print(f"Record with ID {record_id} not found", 0)
                         continue
                 
                 # Remove row from the table
                 self.geo_table.removeRow(row)
-                debug_print(f"Deleted row {row} from table", 0)
+                debug_print(f"Removed row {row} from table", 0)
             
             # Show confirmation
-            self.statusBar().showMessage(f"Deleted {len(selected_rows)} row(s) from table and database", 3000)
+            self.statusBar().showMessage(f"Deleted {len(selected_rows)} row(s)", 3000)
         except Exception as e:
             debug_print(f"Error deleting rows: {str(e)}", 0)
             QMessageBox.warning(self, "Delete Error", f"Error deleting rows: {str(e)}")
@@ -3579,15 +3614,22 @@ class KIGAMMapWindow(QMainWindow):
         dialog.exec_()
     
     def get_records_to_sync(self):
-        """Get records that need to be synced"""
+        """Get all records that need to be synced, including deleted ones"""
         try:
-            records = []
+            # Get all records from the table first
+            table_records = set()
             for row in range(self.geo_table.rowCount()):
-                # Get record from database using ID from table
                 record_id = self.geo_table.item(row, 0).text()
-                record = DikeRecord.get_by_id(record_id)
-                records.append(record)
-            return records
+                table_records.add(int(record_id))
+            
+            # Get all records from database (both active and deleted)
+            all_records = DikeRecord.all_records().where(
+                (DikeRecord.last_sync_date.is_null()) |  # Never synced
+                (DikeRecord.modified_date > DikeRecord.last_sync_date)  # Modified since last sync
+            )
+            
+            return list(all_records)
+            
         except Exception as e:
             QMessageBox.warning(self, "Error", 
                               f"Error getting records to sync: {str(e)}")
