@@ -3660,5 +3660,5 @@ if __name__ == "__main__":
 
 
 '''
-pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole --add-data "icons/*.png;icons" DikeMapper.py
+pyinstaller --name "DikeMapper_v0.0.4.exe" --onefile --noconsole --add-data "icons/*.png;icons" --hidden-import requests --hidden-import pandas --hidden-import numpy --hidden-import pyproj --hidden-import PyQt5 --hidden-import PyQt5.QtWebEngineWidgets --hidden-import PyQt5.QtWebEngineCore --hidden-import PyQt5.QtWebEngine DikeMapper.py
 '''
