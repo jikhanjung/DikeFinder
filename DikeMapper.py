@@ -2469,49 +2469,29 @@ class KIGAMMapWindow(QMainWindow):
             self.add_to_table_button.setStyleSheet("")
             debug_print("Add to Table button disabled", 0)
     
-    def update_coordinates(self, point_num):
-        """Update lat/lng and map marker when x/y coordinates change"""
-        try:
-            # Get x/y coordinates
-            x_input = getattr(self, f'x_coord_{point_num}_input')
-            y_input = getattr(self, f'y_coord_{point_num}_input')
-            lat_input = getattr(self, f'lat_{point_num}_input')
-            lng_input = getattr(self, f'lng_{point_num}_input')
-            
-            x = float(x_input.text()) if x_input.text() else None
-            y = float(y_input.text()) if y_input.text() else None
-            
-            if x is not None and y is not None:
-                # Convert coordinates
-                lng, lat = self.transformer.transform(x, y)
-                lat_input.setText(f"{lat:.6f}")
-                lng_input.setText(f"{lng:.6f}")
+    def update_coordinates(self):
+        """Update the coordinate display with WGS84 coordinates"""
+        debug_print(f"Updating coordinates display", 0)
+        
+        # Format the coordinate display
+        if self.current_lat is not None and self.current_lng is not None:
+            self.coords_label1.setText(f"Curr.: Lat/Lng ({self.current_lat:.6f},{self.current_lng:.6f}) / Raw ({self.current_raw_x:.3f},{self.current_raw_y:.3f})")
+        else:
+            self.coords_label1.setText("Curr.: N/A")
+        if self.previous_lat is not None and self.previous_lng is not None:
+            self.coords_label2.setText(f"Prev.: Lat/Lng ({self.previous_lat:.6f},{self.previous_lng:.6f}) / Raw ({self.previous_raw_x:.3f},{self.previous_raw_y:.3f})")
+        else:
+            self.coords_label2.setText("Prev.: N/A")
+        
+        # Check if we have geological information to add to the table
+        if self.current_geo_info:
+            self.add_to_table_button.setEnabled(True)
+        
+        if self.current_lat is not None and self.current_lng is not None and self.previous_lat is not None and self.previous_lng is not None:
+            self.statusBar().showMessage(f"Coords: {self.current_lat:.6f}, {self.current_lng:.6f} / {self.previous_lat:.6f}, {self.previous_lng:.6f}", 2000)
+        else:
+            self.statusBar().showMessage("No coords available.", 2000)
                 
-                # Update map marker if parent window exists
-                if self.parent_window:
-                    # Create JavaScript to update marker position
-                    js_code = f"""
-                    var marker = window.markers.find(m => m.id === {self.record.id});
-                    if (marker) {{
-                        marker.setLatLng([{lat}, {lng}]);
-                        marker.addTo(map);
-                    }}
-                    """
-                    self.parent_window.web_view.page().runJavaScript(js_code)
-            else:
-                lat_input.setText("")
-                lng_input.setText("")
-                
-        except ValueError:
-            # If x or y is not a valid number, clear lat/lng
-            lat_input.setText("")
-            lng_input.setText("")
-        except Exception as e:
-            QMessageBox.warning(self, "Conversion Error", 
-                              f"Error converting coordinates: {str(e)}")
-            lat_input.setText("")
-            lng_input.setText("")
-    
     def add_current_info_to_table(self):
         """Add current geological information to the table"""
         if not self.current_geo_info:
@@ -3864,6 +3844,7 @@ class KIGAMMapWindow(QMainWindow):
                 
                 # Reselect the edited row
                 self.geo_table.selectRow(row)
+                self.center_map_on_selected()
                 
         except Exception as e:
             QMessageBox.critical(self, "Edit Error", 
