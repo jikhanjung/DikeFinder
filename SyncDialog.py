@@ -6,6 +6,8 @@ import requests
 import json
 import datetime
 from PyQt5.QtCore import QSettings
+import webbrowser
+
 
 class SyncWorker(QThread):
     """Worker thread to handle sync operations"""
@@ -18,6 +20,7 @@ class SyncWorker(QThread):
         self.base_url = base_url
         self.records = records
         self.sync_event = None
+        self.event_id = None
         
     def run(self):
         try:
@@ -31,12 +34,12 @@ class SyncWorker(QThread):
                         raise Exception(f"Failed to create sync event: {response.text}")
                     
                     event_data = response.json()
-                    event_id = event_data['event_id']
-                    self.progress.emit(f"Received event_id: {event_id}")
+                    self.event_id = event_data['event_id']
+                    self.progress.emit(f"Received event_id: {self.event_id}")
                     
                     # Step 2: Create local sync event record
                     self.sync_event = SyncEvent.create(
-                        event_id=event_id,
+                        event_id=self.event_id,
                         status='in_progress',
                         timestamp=datetime.datetime.now(),
                         total_records=len(self.records)
@@ -53,7 +56,7 @@ class SyncWorker(QThread):
                     for i, record in enumerate(self.records, 1):
                         try:
                             record_data = {
-                                "event_id": event_id,
+                                "event_id": self.event_id,
                                 "dike_record": {
                                     "unique_id": record.unique_id,
                                     "symbol": record.symbol,
@@ -142,7 +145,7 @@ class SyncWorker(QThread):
                     # Notify server that sync is complete
                     self.progress.emit("\nNotifying server of sync completion...")
                     end_sync_response = requests.post(
-                        f"{self.base_url}/sync-events/{event_id}/end_sync/",
+                        f"{self.base_url}/sync-events/{self.event_id}/end_sync/",
                         json={
                             "status": final_status,
                             "error_message": f"{fail_count} records failed to sync" if fail_count > 0 else None
@@ -173,7 +176,7 @@ class SyncWorker(QThread):
                         # Try to notify server of failure
                         try:
                             requests.post(
-                                f"{self.base_url}/sync-events/{event_id}/end_sync/",
+                                f"{self.base_url}/sync-events/{self.event_id}/end_sync/",
                                 json={
                                     "status": "failed",
                                     "error_message": str(e)
@@ -192,6 +195,7 @@ class SyncDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        self.event_id = None
         self.settings = QSettings('KIGAM', 'DikeMapper')
         self.base_url = self.settings.value('sync/server_url', 
                                           "http://127.0.0.1:8000/dikesync")
@@ -234,13 +238,29 @@ class SyncDialog(QDialog):
         self.sync_button.clicked.connect(self.start_sync)
         button_layout.addWidget(self.sync_button)
         
+        self.show_result_button = QPushButton("Show Result")
+        self.show_result_button.clicked.connect(self.show_result)
+        button_layout.addWidget(self.show_result_button)
+        
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close)
         button_layout.addWidget(self.close_button)
         
         layout.addLayout(button_layout)
         self.setLayout(layout)
-        
+    
+    def show_result(self):
+        # open system default web browser to show sync result
+        # URL: sync URL + "/web/sync_event/"
+        sync_url = self.base_url + "/web/sync-events/"
+        if self.event_id:
+            sync_url += f"{self.event_id}/"
+        #else:
+            #sync_url += "list/"
+        webbrowser.open(sync_url)
+
+
+
     def log_message(self, message):
         self.log_text.append(message)
         
@@ -291,6 +311,10 @@ class SyncDialog(QDialog):
                            f"An error occurred during sync:\n{error_message}")
         
     def handle_sync_complete(self, success):
+        if self.worker.event_id != None:
+            self.log_message(f"Sync event ID: {self.worker.event_id}")
+            self.event_id = self.worker.event_id
+        #self.log_message("Sync process completed.")
         self.progress_bar.hide()
         if success:
             self.status_label.setText("Sync completed successfully")
