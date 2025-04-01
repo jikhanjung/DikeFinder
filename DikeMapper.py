@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from pyproj import Transformer
+from pyproj import Transformer, Geod
 from geopy.distance import geodesic
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QLabel, QLineEdit, 
@@ -3563,6 +3563,24 @@ class KIGAMMapWindow(QMainWindow):
             if not db.is_closed():
                 db.close()
 
+    def destination_point(self, lat1, lon1, bearing_deg, distance_m):
+        """
+        Calculate the destination lat/lon given starting point, bearing, and distance.
+        
+        Parameters:
+            lat1 (float): Starting latitude
+            lon1 (float): Starting longitude
+            bearing_deg (float): Forward azimuth (degrees, clockwise from North)
+            distance_m (float): Distance in meters
+
+        Returns:
+            (lat2, lon2): Tuple of destination coordinates
+        """
+        # Initialize WGS84 ellipsoid
+        geod = Geod(ellps="WGS84")
+        lon2, lat2, _ = geod.fwd(lon1, lat1, bearing_deg, distance_m)
+        return lat2, lon2
+
     def center_map_on_selected(self):
         """Center the map on the selected row's coordinates and show a line marker representing the dike"""
         selected_indexes = self.geo_table.selectedIndexes()
@@ -3611,6 +3629,8 @@ class KIGAMMapWindow(QMainWindow):
                             'angle': angle,
                             'isSelected': row == selected_row
                         }
+                        if point['lat2'] is None and point['lng2'] is None:
+                            point['lat2'], point['lng2'] = self.destination_point(point['lat1'], point['lng1'], point['angle'], point['distance'])
                         all_points.append(point)
                 except (ValueError, AttributeError) as e:
                     debug_print(f"Error processing row {row}: {str(e)}", 0)
