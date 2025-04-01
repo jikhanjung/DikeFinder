@@ -12,14 +12,16 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                             QTableWidget, QTableWidgetItem, QMessageBox, 
                             QFileDialog, QCheckBox, QHeaderView, QSizePolicy,
-                            QLayout, QSplitter, QToolBar, QDialog, QDockWidget)
+                            QLayout, QSplitter, QToolBar, QDialog, QDockWidget,
+                            QFormLayout, QTextEdit, QGroupBox, QDialogButtonBox)
 from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSignal, QTimer, QSettings
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 from PyQt5.QtGui import QIcon, QFont
-from DikeModels import DikeRecord, init_database, db, DB_PATH, generate_sortable_id
+from DikeModels import DikeRecord, init_database, db, DB_PATH, generate_sortable_id, SyncEvent
 from SyncDialog import SyncDialog
 import shutil
+import pyproj
 
 # Company and program information
 COMPANY_NAME = "PaleoBytes"
@@ -99,6 +101,205 @@ def debug_print(message, level=1):
             logging.info(message)
         else:
             logging.debug(message)
+
+class EditDialog(QDialog):
+    def __init__(self, record, parent=None):
+        super().__init__(parent)
+        self.record = record
+        self.parent_window = parent  # Store reference to parent window
+        self.initUI()
+        
+        # Initialize coordinate transformer
+        self.transformer = pyproj.Transformer.from_crs(
+            "EPSG:3857",  # source CRS
+            "EPSG:4326",  # target CRS
+            always_xy=True
+        )
+        
+    def initUI(self):
+        self.setWindowTitle("Edit Record")
+        layout = QVBoxLayout()
+        
+        # Create form layout for fields
+        form_layout = QFormLayout()
+        
+        # Basic fields
+        self.symbol_input = QLineEdit(self.record.symbol or '')
+        self.stratum_input = QLineEdit(self.record.stratum or '')
+        self.rock_type_input = QLineEdit(self.record.rock_type or '')
+        self.era_input = QLineEdit(self.record.era or '')
+        self.map_sheet_input = QLineEdit(self.record.map_sheet or '')
+        self.address_input = QLineEdit(self.record.address or '')
+        self.distance_input = QLineEdit(str(self.record.distance) if self.record.distance is not None else '')
+        self.angle_input = QLineEdit(str(self.record.angle) if self.record.angle is not None else '')
+        self.memo_input = QTextEdit()
+        self.memo_input.setText(self.record.memo or '')
+        self.memo_input.setMaximumHeight(100)  # Limit the height of memo field
+        
+        # Coordinate fields for point 1
+        self.x_coord_1_input = QLineEdit(str(self.record.x_coord_1) if self.record.x_coord_1 is not None else '')
+        self.y_coord_1_input = QLineEdit(str(self.record.y_coord_1) if self.record.y_coord_1 is not None else '')
+        self.lat_1_input = QLineEdit(str(self.record.lat_1) if self.record.lat_1 is not None else '')
+        self.lng_1_input = QLineEdit(str(self.record.lng_1) if self.record.lng_1 is not None else '')
+        self.lat_1_input.setReadOnly(True)
+        self.lng_1_input.setReadOnly(True)
+        
+        # Coordinate fields for point 2
+        self.x_coord_2_input = QLineEdit(str(self.record.x_coord_2) if self.record.x_coord_2 is not None else '')
+        self.y_coord_2_input = QLineEdit(str(self.record.y_coord_2) if self.record.y_coord_2 is not None else '')
+        self.lat_2_input = QLineEdit(str(self.record.lat_2) if self.record.lat_2 is not None else '')
+        self.lng_2_input = QLineEdit(str(self.record.lng_2) if self.record.lng_2 is not None else '')
+        self.lat_2_input.setReadOnly(True)
+        self.lng_2_input.setReadOnly(True)
+        
+        # Connect x/y coordinate changes to update lat/lng and map
+        self.x_coord_1_input.textChanged.connect(lambda: self.update_coordinates(1))
+        self.y_coord_1_input.textChanged.connect(lambda: self.update_coordinates(1))
+        self.x_coord_2_input.textChanged.connect(lambda: self.update_coordinates(2))
+        self.y_coord_2_input.textChanged.connect(lambda: self.update_coordinates(2))
+        
+        # Add basic fields to form
+        form_layout.addRow("기호:", self.symbol_input)
+        form_layout.addRow("지층:", self.stratum_input)
+        form_layout.addRow("대표암상:", self.rock_type_input)
+        form_layout.addRow("시대:", self.era_input)
+        form_layout.addRow("도폭:", self.map_sheet_input)
+        form_layout.addRow("주소:", self.address_input)
+        form_layout.addRow("거리:", self.distance_input)
+        form_layout.addRow("각도:", self.angle_input)
+        form_layout.addRow("메모:", self.memo_input)
+        
+        # Create horizontal layout for coordinate groups
+        coords_layout = QHBoxLayout()
+        
+        # Add coordinate fields with group boxes
+        point1_group = QGroupBox("좌표 1")
+        point1_layout = QFormLayout()
+        point1_layout.addRow("X 좌표:", self.x_coord_1_input)
+        point1_layout.addRow("Y 좌표:", self.y_coord_1_input)
+        point1_layout.addRow("위도:", self.lat_1_input)
+        point1_layout.addRow("경도:", self.lng_1_input)
+        point1_group.setLayout(point1_layout)
+        
+        point2_group = QGroupBox("좌표 2")
+        point2_layout = QFormLayout()
+        point2_layout.addRow("X 좌표:", self.x_coord_2_input)
+        point2_layout.addRow("Y 좌표:", self.y_coord_2_input)
+        point2_layout.addRow("위도:", self.lat_2_input)
+        point2_layout.addRow("경도:", self.lng_2_input)
+        point2_group.setLayout(point2_layout)
+        
+        # Add groups to horizontal layout
+        coords_layout.addWidget(point1_group)
+        coords_layout.addWidget(point2_group)
+        
+        # Add layouts to main layout
+        layout.addLayout(form_layout)
+        layout.addLayout(coords_layout)
+        
+        # Add buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.save_changes)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        
+        self.setLayout(layout)
+        
+    def update_coordinates(self, point_num):
+        """Update lat/lng and map marker when x/y coordinates change"""
+        try:
+            # Get x/y coordinates
+            x_input = getattr(self, f'x_coord_{point_num}_input')
+            y_input = getattr(self, f'y_coord_{point_num}_input')
+            lat_input = getattr(self, f'lat_{point_num}_input')
+            lng_input = getattr(self, f'lng_{point_num}_input')
+            
+            x = float(x_input.text()) if x_input.text() else None
+            y = float(y_input.text()) if y_input.text() else None
+            
+            if x is not None and y is not None:
+                # Convert coordinates
+                lng, lat = self.transformer.transform(x, y)
+                lat_input.setText(f"{lat:.6f}")
+                lng_input.setText(f"{lng:.6f}")
+                
+                # Update map marker if parent window exists
+                if self.parent_window:
+                    # Create JavaScript to update marker position
+                    js_code = f"""
+                    var marker = window.markers.find(m => m.id === {self.record.id});
+                    if (marker) {{
+                        marker.setLatLng([{lat}, {lng}]);
+                        marker.addTo(map);
+                    }}
+                    """
+                    self.parent_window.web_view.page().runJavaScript(js_code)
+            else:
+                lat_input.setText("")
+                lng_input.setText("")
+                
+        except ValueError:
+            # If x or y is not a valid number, clear lat/lng
+            lat_input.setText("")
+            lng_input.setText("")
+        except Exception as e:
+            QMessageBox.warning(self, "Conversion Error", 
+                              f"Error converting coordinates: {str(e)}")
+            lat_input.setText("")
+            lng_input.setText("")
+    
+    def save_changes(self):
+        try:
+            # Update basic fields
+            self.record.symbol = self.symbol_input.text() or None
+            self.record.stratum = self.stratum_input.text() or None
+            self.record.rock_type = self.rock_type_input.text() or None
+            self.record.era = self.era_input.text() or None
+            self.record.map_sheet = self.map_sheet_input.text() or None
+            self.record.address = self.address_input.text() or None
+            self.record.memo = self.memo_input.toPlainText() or None
+            
+            # Update numeric fields with validation
+            try:
+                self.record.distance = float(self.distance_input.text()) if self.distance_input.text() else None
+            except ValueError:
+                self.record.distance = None
+                
+            try:
+                self.record.angle = float(self.angle_input.text()) if self.angle_input.text() else None
+            except ValueError:
+                self.record.angle = None
+            
+            # Update coordinate fields with validation
+            for field, input_widget in [
+                ('x_coord_1', self.x_coord_1_input),
+                ('y_coord_1', self.y_coord_1_input),
+                ('lat_1', self.lat_1_input),
+                ('lng_1', self.lng_1_input),
+                ('x_coord_2', self.x_coord_2_input),
+                ('y_coord_2', self.y_coord_2_input),
+                ('lat_2', self.lat_2_input),
+                ('lng_2', self.lng_2_input)
+            ]:
+                try:
+                    value = float(input_widget.text()) if input_widget.text() else None
+                    setattr(self.record, field, value)
+                except ValueError:
+                    setattr(self.record, field, None)
+            
+            # Update modified date
+            self.record.modified_date = datetime.datetime.now()
+            
+            # Save changes to database
+            self.record.save()
+            
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", 
+                               f"Error saving changes: {str(e)}")
 
 
 class ExcelConverterWindow(QDialog):
@@ -745,36 +946,7 @@ class KIGAMMapWindow(QMainWindow):
         self.current_map_center = None
         self.current_map_zoom = None
         
-        # Add login controls
-        #login_layout = QHBoxLayout()
-        
-        #self.email_label = QLabel("Email:")
-        #self.email_input = QLineEdit()
-        #self.password_label = QLabel("Password:")
-        #self.password_input = QLineEdit()
-        #self.password_input.setEchoMode(QLineEdit.Password)
-        #self.remember_me = QCheckBox("Remember Me")
-        #self.login_button = QPushButton("Login", self)
-        #self.login_button.clicked.connect(self.login_to_kigam)
-        self.clear_credentials_button = QPushButton("Clear Login Info")
-        self.clear_credentials_button.clicked.connect(self.clear_saved_credentials)
-        self.clear_credentials_button.setToolTip("Clear saved credentials")
-        
-        #login_layout.addWidget(self.email_label)
-        #login_layout.addWidget(self.email_input)
-        #login_layout.addWidget(self.password_label)
-        #login_layout.addWidget(self.password_input)
-        #login_layout.addWidget(self.remember_me)
-        #login_layout.addWidget(self.login_button)
-        #login_layout.addWidget(self.clear_credentials_button)
-        
-        #self.layout.addLayout(login_layout)
-        
-        # Add login status label
-        #self.login_status = QLabel("")
-        #self.login_status.setStyleSheet("color: blue;")
-        #self.layout.addWidget(self.login_status)
-        
+
         # Add map tool controls
         tools_layout = QHBoxLayout()
         
@@ -829,10 +1001,6 @@ class KIGAMMapWindow(QMainWindow):
         
         self.layout.addLayout(tools_layout)
         
-        # Create splitter for map and table
-        #self.splitter = QSplitter(Qt.Vertical)
-        #self.layout.addWidget(self.splitter, 1)  # Give splitter stretch priority
-        
         # Add web view to top part of splitter
         self.web_view_container = QWidget()
         self.web_view_layout = QVBoxLayout(self.web_view_container)
@@ -874,7 +1042,13 @@ class KIGAMMapWindow(QMainWindow):
         self.center_selected_button.setToolTip("Center the map on the selected row's coordinates")
         self.center_selected_button.clicked.connect(self.center_map_on_selected)
         self.center_selected_button.setEnabled(False)  # Initially disabled until a row is selected
+
+        # Create edit button
+        self.edit_row_button = QPushButton("Edit")
+        self.edit_row_button.setToolTip("Edit selected record")
+        self.edit_row_button.clicked.connect(self.edit_selected_row)
         
+       
         self.clear_table_button = QPushButton("Clear Table")
         self.clear_table_button.setToolTip("Clear all rows from the table")
         self.clear_table_button.clicked.connect(self.clear_geo_table)
@@ -892,9 +1066,14 @@ class KIGAMMapWindow(QMainWindow):
         self.dock_button.clicked.connect(self.toggle_table_dock)
         self.dock_button.setCheckable(True)
 
+        self.clear_credentials_button = QPushButton("Clear Login Info")
+        self.clear_credentials_button.clicked.connect(self.clear_saved_credentials)
+        self.clear_credentials_button.setToolTip("Clear saved credentials")
+
         table_controls_layout.addWidget(self.add_to_table_button)
         table_controls_layout.addWidget(self.delete_row_button)
         table_controls_layout.addWidget(self.center_selected_button)
+        table_controls_layout.addWidget(self.edit_row_button)
         table_controls_layout.addWidget(self.clear_table_button)
         table_controls_layout.addWidget(self.import_excel_button)
         table_controls_layout.addWidget(self.export_table_button)
@@ -914,6 +1093,8 @@ class KIGAMMapWindow(QMainWindow):
 
         # Hide row numbers (vertical header)
         self.geo_table.verticalHeader().setVisible(False)
+        # Connect double-click to edit
+        self.geo_table.doubleClicked.connect(lambda index: self.edit_selected_row())
 
         # Simplified headers without parentheses
         headers = ["ID", "기호", "지층", "대표암상", "시대", "도폭", "주소",
@@ -2288,28 +2469,48 @@ class KIGAMMapWindow(QMainWindow):
             self.add_to_table_button.setStyleSheet("")
             debug_print("Add to Table button disabled", 0)
     
-    def update_coordinates(self):
-        """Update the coordinate display with WGS84 coordinates"""
-        debug_print(f"Updating coordinates display", 0)
-        
-        # Format the coordinate display
-        if self.current_lat is not None and self.current_lng is not None:
-            self.coords_label1.setText(f"Curr.: Lat/Lng ({self.current_lat:.6f},{self.current_lng:.6f}) / Raw ({self.current_raw_x:.3f},{self.current_raw_y:.3f})")
-        else:
-            self.coords_label1.setText("Curr.: N/A")
-        if self.previous_lat is not None and self.previous_lng is not None:
-            self.coords_label2.setText(f"Prev.: Lat/Lng ({self.previous_lat:.6f},{self.previous_lng:.6f}) / Raw ({self.previous_raw_x:.3f},{self.previous_raw_y:.3f})")
-        else:
-            self.coords_label2.setText("Prev.: N/A")
-        
-        # Check if we have geological information to add to the table
-        if self.current_geo_info:
-            self.add_to_table_button.setEnabled(True)
-        
-        if self.current_lat is not None and self.current_lng is not None and self.previous_lat is not None and self.previous_lng is not None:
-            self.statusBar().showMessage(f"Coords: {self.current_lat:.6f}, {self.current_lng:.6f} / {self.previous_lat:.6f}, {self.previous_lng:.6f}", 2000)
-        else:
-            self.statusBar().showMessage("No coords available.", 2000)
+    def update_coordinates(self, point_num):
+        """Update lat/lng and map marker when x/y coordinates change"""
+        try:
+            # Get x/y coordinates
+            x_input = getattr(self, f'x_coord_{point_num}_input')
+            y_input = getattr(self, f'y_coord_{point_num}_input')
+            lat_input = getattr(self, f'lat_{point_num}_input')
+            lng_input = getattr(self, f'lng_{point_num}_input')
+            
+            x = float(x_input.text()) if x_input.text() else None
+            y = float(y_input.text()) if y_input.text() else None
+            
+            if x is not None and y is not None:
+                # Convert coordinates
+                lng, lat = self.transformer.transform(x, y)
+                lat_input.setText(f"{lat:.6f}")
+                lng_input.setText(f"{lng:.6f}")
+                
+                # Update map marker if parent window exists
+                if self.parent_window:
+                    # Create JavaScript to update marker position
+                    js_code = f"""
+                    var marker = window.markers.find(m => m.id === {self.record.id});
+                    if (marker) {{
+                        marker.setLatLng([{lat}, {lng}]);
+                        marker.addTo(map);
+                    }}
+                    """
+                    self.parent_window.web_view.page().runJavaScript(js_code)
+            else:
+                lat_input.setText("")
+                lng_input.setText("")
+                
+        except ValueError:
+            # If x or y is not a valid number, clear lat/lng
+            lat_input.setText("")
+            lng_input.setText("")
+        except Exception as e:
+            QMessageBox.warning(self, "Conversion Error", 
+                              f"Error converting coordinates: {str(e)}")
+            lat_input.setText("")
+            lng_input.setText("")
     
     def add_current_info_to_table(self):
         """Add current geological information to the table"""
@@ -2509,6 +2710,8 @@ class KIGAMMapWindow(QMainWindow):
                     if db.is_closed():
                         db.connect()
                     DikeRecord.delete().execute()
+                    SyncEvent.delete().execute()
+
                     debug_print("All records deleted from database", 0)
                 except Exception as e:
                     debug_print(f"Error clearing database: {str(e)}", 0)
@@ -3634,6 +3837,37 @@ class KIGAMMapWindow(QMainWindow):
             QMessageBox.warning(self, "Error", 
                               f"Error getting records to sync: {str(e)}")
             return []
+
+    def edit_selected_row(self):
+        """Open EditDialog for the selected row"""
+        selected_rows = self.geo_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", 
+                              "Please select a row to edit.")
+            return
+            
+        # Get the first selected row
+        row = selected_rows[0].row()
+        
+        try:
+            # Get record ID from the first column
+            record_id = int(self.geo_table.item(row, 0).text())
+            
+            # Fetch the record from database
+            record = DikeRecord.get_by_id(record_id)
+            
+            # Open edit dialog
+            dialog = EditDialog(record, self)
+            if dialog.exec_() == QDialog.Accepted:
+                # Refresh the table to show updated data
+                self.load_data_from_database()
+                
+                # Reselect the edited row
+                self.geo_table.selectRow(row)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Edit Error", 
+                               f"Error editing record: {str(e)}")
 
 # Main function to run the application as standalone
 def main():
